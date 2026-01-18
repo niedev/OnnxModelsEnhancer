@@ -1,6 +1,7 @@
 from operator import contains
 from os import PathLike
 from pathlib import Path
+import huggingface_hub
 import onnx
 import onnx_execution
 from onnxruntime.quantization import (
@@ -13,6 +14,7 @@ from onnxruntime.quantization import quantize_dynamic, QuantFormat, Quantization
 import optimum.exporters.onnx
 from onnx import TensorProto, numpy_helper
 import numpy as np
+from datasets import load_dataset, concatenate_datasets, DatasetDict, Dataset
 
 
 
@@ -683,21 +685,21 @@ if __name__ == '__main__':
     #quantize_madlad_8bit(quality=True, weightOnly=False, outputFolder="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Int8Quality/")
     #quantize_madlad_8bit(quality=False, weightOnly=True, outputFolder="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Int8WO/")
 
-    quantize_madlad_4bit()
+    #quantize_madlad_4bit()
 
-    '''onnx_execution.compare_models_quality_multi_language(
+    onnx_execution.compare_models_quality_multi_language(
         initializer_path="onnx/Madlad/Optimum_Cache_Optimized/cache_initializer.onnx",
         encoder_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/encoder_model.onnx",
         decoder_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/decoder_model.onnx",
         embed_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/madlad_embed.onnx",
-        initializer_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTN16/madlad_cache_initializer_4bit.onnx",
-        encoder_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTN16/madlad_encoder_4bit.onnx",
-        decoder_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTN16/madlad_decoder_4bit.onnx",
-        embed_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTN16/madlad_embed_8bit.onnx",
-        modelType = onnx_execution.ModelType.MADLAD, logFile = True, logFileFolder = "onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Quality/RTN16/", logFileName = "madlad_quality_Int4_16"
+        initializer_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Int8WO/madlad_cache_initializer_8bit.onnx",
+        encoder_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/GPTQ/madlad_encoder_4bit.onnx",
+        decoder_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/GPTQ/madlad_decoder_4bit.onnx",
+        embed_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Int8WO/madlad_embed_8bit.onnx",
+        modelType = onnx_execution.ModelType.MADLAD, logFile = True, logFileFolder = "onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Quality/GPTQ/", logFileName = "madlad_quality_Int4_GPTQ"
     )
     
-    onnx_execution.compare_models_quality_multi_language(
+    '''onnx_execution.compare_models_quality_multi_language(
         initializer_path="onnx/Madlad/Optimum_Cache_Optimized/cache_initializer.onnx",
         encoder_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/encoder_model.onnx",
         decoder_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/decoder_model.onnx",

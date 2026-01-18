@@ -9,6 +9,9 @@ onnx/
 # C extensions
 *.so
 
+# hugging face token file
+hf_token.txt
+
 # Distribution / packaging
 .Python
 build/
