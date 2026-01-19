@@ -39,6 +39,9 @@ class MadladEncoderCalibrationDataReader(CalibrationDataReader):
         self._idx += 1
         return x
     
+    def reset(self):
+        self._idx = 0
+    
 
 class MadladDecoderCalibrationDataReader(CalibrationDataReader):
     def __init__(self, samples: List[Dict[str, str]], targetLanguages: List[str],
@@ -155,3 +158,6 @@ class MadladDecoderCalibrationDataReader(CalibrationDataReader):
         x = self.encoded[self._idx]
         self._idx += 1
         return x
+    
+    def reset(self):
+        self._idx = 0

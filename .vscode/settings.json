@@ -1,0 +1,7 @@
+{
+    "python.analysis.useLibraryCodeForTypes": true,
+    "python.analysis.extraPaths": ["${workspaceFolder}"],
+    "terminal.integrated.env.linux": {
+        "PYTHONPATH": "${workspaceFolder}"
+    }
+}

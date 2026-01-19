@@ -3,6 +3,7 @@ import enum
 import hashlib
 import os
 from pathlib import Path
+import pickle
 import time
 
 import datasets
@@ -13,10 +14,13 @@ from strsimpy.normalized_levenshtein import NormalizedLevenshtein
 
 
 class TranslationCache:
-    def __init__(self, max_items=1000, ttl_s=24*3600):
+    def __init__(self, max_items=1000, ttl_s=24*3600, cache_file="Cache/translation_cache.pkl", save_cache_to_file=True):
         self.max_items = max_items
         self.ttl_s = ttl_s
         self._data = OrderedDict()  # key -> (timestamp, value)
+        self.cache_file = cache_file
+        self.save_cache_to_file = save_cache_to_file
+        self._load_from_file()
 
     def get(self, key):
         item = self._data.get(key)
@@ -34,9 +38,9 @@ class TranslationCache:
         self._data.move_to_end(key)
         while len(self._data) > self.max_items:
             self._data.popitem(last=False)
+        if(self.save_cache_to_file): self._save_to_file()
 
     def make_cache_key(self, text, tgt_lang, encoder_path, decoder_path, initializer_path, embed_path):
-        # include anything that would change output
         payload = "\n".join([
             "v1",  # bump when you change logic
             tgt_lang,
@@ -44,9 +48,44 @@ class TranslationCache:
             text
         ]).encode("utf-8")
         return hashlib.sha256(payload).hexdigest()
+    
+
+    # private helpers
+    def _load_from_file(self):
+        if not os.path.exists(self.cache_file):
+            return
+
+        try:
+            with open(self.cache_file, "rb") as f:
+                data = pickle.load(f)
+
+            # Only accept if it looks valid
+            if isinstance(data, OrderedDict):
+                self._data = data
+
+            # Clean expired items on load
+            now = time.time()
+            expired = [k for k, (ts, _) in self._data.items()
+                       if now - ts > self.ttl_s]
+
+            for k in expired:
+                del self._data[k]
+
+        except Exception:
+            # If anything goes wrong (corrupt file, etc.), start fresh
+            self._data = OrderedDict()
+
+    def _save_to_file(self):
+        try:
+            with open(self.cache_file, "wb") as f:
+                pickle.dump(self._data, f)
+        except Exception as e:
+            # You might want logging here in a real app
+            print(f"Warning: could not save cache: {e}")
 
 
-translation_cache_madlad = TranslationCache(max_items=50000, ttl_s=float('inf'))
+
+translation_cache_madlad = TranslationCache(max_items=50000, ttl_s=float('inf'), save_cache_to_file=False)
 
 def onnx_execution(text, src_lang, tgt_lang):
     # caricamento encoder session

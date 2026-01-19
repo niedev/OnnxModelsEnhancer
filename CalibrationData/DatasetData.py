@@ -3,6 +3,8 @@ import huggingface_hub
 from datasets import load_dataset, concatenate_datasets, DatasetDict, Dataset
 import math
 import random
+import os
+os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "120"
 
 
 # Two-char language code -> desired weight (percent as fraction)
@@ -115,6 +117,7 @@ def getDatasetData(
     split: str = "dev",
     seed: int = 42,
     hf_token: Optional[str] = None,
+    log = False
 ) -> List[dict[str, str]]:
     """
     Build calibration samples from FLORES+ (openlanguagedata/flores_plus) using the
@@ -200,6 +203,12 @@ def getDatasetData(
     for two, texts in collected.items():
         for t in texts:
             out.append({"lang": two, "text": t})
+
+    #eventually print the data
+    if(log):
+        for o in out:
+            print(o)
+            print("")
 
     # Shuffle final output so GPTQ sees mixed languages/lengths
     rng.shuffle(out)

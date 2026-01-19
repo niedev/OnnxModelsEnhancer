@@ -1,8 +1,11 @@
 from operator import contains
 from os import PathLike
 from pathlib import Path
+import pprint
 import huggingface_hub
 import onnx
+import onnxruntime
+from QuantizationDebug import qdq_loss_debug_updated
 import onnx_execution
 from onnxruntime.quantization import (
     matmul_nbits_quantizer,
@@ -17,10 +20,10 @@ import numpy as np
 from datasets import load_dataset, concatenate_datasets, DatasetDict, Dataset
 
 
+en_text = "Also unlike 2014, there aren’t nearly as many loopholes. You can’t just buy a 150-watt incandescent or a three-way bulb — the ban covers any normal bulb that generates less than 45 lumens per watt, which pretty much rules out both incandescent and halogen tech in their entirety."
 
 
 def create_madlad_final_model(execute_model: bool):
-    en_text = "Also unlike 2014, there aren’t nearly as many loopholes. You can’t just buy a 150-watt incandescent or a three-way bulb — the ban covers any normal bulb that generates less than 45 lumens per watt, which pretty much rules out both incandescent and halogen tech in their entirety."
     convert_madlad_cache_optimum()
     create_madlad_cache_initializer("onnx/Madlad/Optimum_Cache_Optimized/decoder_model.onnx", "onnx/Madlad/Optimum_Cache_Optimized/cache_initializer.onnx")
     create_madlad_embed("onnx/Madlad/Optimum_Cache_Optimized/decoder_with_past_model.onnx", "onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/madlad_embed.onnx")
@@ -343,13 +346,13 @@ def adapt_madlad_to_embed(encoder_path: PathLike, decoder_path: PathLike, encode
 
 
 
-def quantize_madlad_4bit():
+def quantize_madlad_4bit(qdq = False, quality=False, outputFolder = "onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/"):
     accuracy_level = 4
     quant_config = matmul_nbits_quantizer.DefaultWeightOnlyQuantConfig(
-        block_size=16, # 2's exponential and >= 16 (128)
+        block_size=128, # 2's exponential and >= 16 (128)
         is_symmetric=False, # if true, quantize to Int4. otherwise, quantize to uint4.
         accuracy_level=4, # used by MatMulNbits, see https://github.com/microsoft/onnxruntime/blob/main/docs/ContribOperators.md#attributes-35,
-        quant_format=quant_utils.QuantFormat.QOperator,
+        quant_format = quant_utils.QuantFormat.QDQ if qdq else quant_utils.QuantFormat.QOperator,
         op_types_to_quantize={"MatMul"})
     
     #quant_config.algorithm = "HQQ"
@@ -359,7 +362,7 @@ def quantize_madlad_4bit():
 
     #quantization of encoder
     model_fp32_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/encoder_model.onnx"
-    model_int4_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/madlad_encoder_4bit.onnx"
+    model_int4_path=outputFolder + "madlad_encoder_4bit.onnx"
     if(not Path(model_int4_path).is_file()):
         model = quant_utils.load_model_with_shape_infer(Path(model_fp32_path))
         quant = matmul_nbits_quantizer.MatMulNBitsQuantizer(
@@ -374,7 +377,7 @@ def quantize_madlad_4bit():
 
     #quantization of decoder
     model_fp32_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/decoder_model.onnx"
-    model_int4_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/madlad_decoder_4bit.onnx"
+    model_int4_path=outputFolder + "madlad_decoder_4bit.onnx"
 
     if(not Path(model_int4_path).is_file()):
         model = quant_utils.load_model_with_shape_infer(Path(model_fp32_path))
@@ -390,7 +393,7 @@ def quantize_madlad_4bit():
 
     #quantization of cache init
     model_fp32_path="onnx/Madlad/Optimum_Cache_Optimized/cache_initializer.onnx"
-    model_int4_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/madlad_cache_initializer_4bit.onnx"
+    model_int4_path=outputFolder + "madlad_cache_initializer_4bit.onnx"
 
     if(not Path(model_int4_path).is_file()):
         model = quant_utils.load_model_with_shape_infer(Path(model_fp32_path))
@@ -421,7 +424,7 @@ def quantize_madlad_4bit():
     '''
     
     model_fp32_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/madlad_embed.onnx"
-    model_int8_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/madlad_embed_8bit.onnx"
+    model_int8_path=outputFolder + "madlad_embed_8bit.onnx"
 
     if(not Path(model_int8_path).is_file()):
         quantize_dynamic(Path(model_fp32_path), Path(model_int8_path),
@@ -431,9 +434,6 @@ def quantize_madlad_4bit():
                                     "ActivationSymmetric": False,
                                     "WeightSymmetric": False,
                                     "MatMulConstBOnly": True})
-
-    
-    convert_madlad_HQQ_model_to_full_int4()
 
 
 
@@ -685,21 +685,21 @@ if __name__ == '__main__':
     #quantize_madlad_8bit(quality=True, weightOnly=False, outputFolder="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Int8Quality/")
     #quantize_madlad_8bit(quality=False, weightOnly=True, outputFolder="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Int8WO/")
 
-    #quantize_madlad_4bit()
+    quantize_madlad_4bit(qdq=False, outputFolder="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTNqdq/")
 
-    onnx_execution.compare_models_quality_multi_language(
+    '''onnx_execution.compare_models_quality_multi_language(
         initializer_path="onnx/Madlad/Optimum_Cache_Optimized/cache_initializer.onnx",
         encoder_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/encoder_model.onnx",
         decoder_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/decoder_model.onnx",
         embed_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/madlad_embed.onnx",
-        initializer_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Int8WO/madlad_cache_initializer_8bit.onnx",
-        encoder_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/GPTQ/madlad_encoder_4bit.onnx",
-        decoder_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/GPTQ/madlad_decoder_4bit.onnx",
-        embed_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Int8WO/madlad_embed_8bit.onnx",
-        modelType = onnx_execution.ModelType.MADLAD, logFile = True, logFileFolder = "onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Quality/GPTQ/", logFileName = "madlad_quality_Int4_GPTQ"
+        initializer_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTNqdq/madlad_cache_initializer_4bit.onnx",
+        encoder_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTNqdq/madlad_encoder_4bit.onnx",
+        decoder_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTNqdq/madlad_decoder_4bit.onnx",
+        embed_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTNqdq/madlad_embed_8bit.onnx",
+        modelType = onnx_execution.ModelType.MADLAD, logFile = True, logFileFolder = "onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Quality/RTNqdq/", logFileName = "madlad_quality_Int4"
     )
     
-    '''onnx_execution.compare_models_quality_multi_language(
+    onnx_execution.compare_models_quality_multi_language(
         initializer_path="onnx/Madlad/Optimum_Cache_Optimized/cache_initializer.onnx",
         encoder_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/encoder_model.onnx",
         decoder_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/decoder_model.onnx",
