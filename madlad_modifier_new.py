@@ -1,3 +1,4 @@
+import copy
 from operator import contains
 from os import PathLike
 from pathlib import Path
@@ -355,7 +356,8 @@ def quantize_madlad_4bit(qdq = False, quality=False, outputFolder = "onnx/Madlad
         quant_format = quant_utils.QuantFormat.QDQ if qdq else quant_utils.QuantFormat.QOperator,
         op_types_to_quantize={"MatMul"})
     
-    #quant_config.algorithm = "HQQ"
+    quant_config_int8 = copy.deepcopy(quant_config)
+    quant_config_int8.bits = 8
 
     quant_config_hqq = matmul_nbits_quantizer.HQQWeightOnlyQuantConfig()  #op_types_to_quantize={"MatMul", "Gather"} (Gather non è supportato con HQQ)
 
@@ -364,14 +366,9 @@ def quantize_madlad_4bit(qdq = False, quality=False, outputFolder = "onnx/Madlad
     model_fp32_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/encoder_model.onnx"
     model_int4_path=outputFolder + "madlad_encoder_4bit.onnx"
     if(not Path(model_int4_path).is_file()):
-        model = quant_utils.load_model_with_shape_infer(Path(model_fp32_path))
-        quant = matmul_nbits_quantizer.MatMulNBitsQuantizer(
-            model,
-            accuracy_level=accuracy_level,
-            nodes_to_exclude=None, # specify a list of nodes to exclude from quantization
-            algo_config=quant_config,)
-        quant.process()
-        quant.model.save_model_to_file(model_int4_path, False)
+        _quantize_weight_only(model_fp32_path, model_int4_path, quant_config, get_DenseReluDense_nodes(model_fp32_path) if quality else None, accuracy_level, True)
+        if(quality):
+            _quantize_weight_only(model_int4_path, model_int4_path, quant_config_int8)
         set_model_matmul_accuracy_level(model_int4_path, model_int4_path, accuracy_level)
 
 
@@ -380,14 +377,9 @@ def quantize_madlad_4bit(qdq = False, quality=False, outputFolder = "onnx/Madlad
     model_int4_path=outputFolder + "madlad_decoder_4bit.onnx"
 
     if(not Path(model_int4_path).is_file()):
-        model = quant_utils.load_model_with_shape_infer(Path(model_fp32_path))
-        quant = matmul_nbits_quantizer.MatMulNBitsQuantizer(
-            model,
-            accuracy_level=accuracy_level,
-            nodes_to_exclude=None, # specify a list of nodes to exclude from quantization
-            algo_config=quant_config,)
-        quant.process()
-        quant.model.save_model_to_file(model_int4_path, False)
+        _quantize_weight_only(model_fp32_path, model_int4_path, quant_config, get_DenseReluDense_nodes(model_fp32_path) if quality else None, accuracy_level, True)
+        if(quality):
+            _quantize_weight_only(model_int4_path, model_int4_path, quant_config_int8)
         set_model_matmul_accuracy_level(model_int4_path, model_int4_path, accuracy_level)
 
 
@@ -396,55 +388,50 @@ def quantize_madlad_4bit(qdq = False, quality=False, outputFolder = "onnx/Madlad
     model_int4_path=outputFolder + "madlad_cache_initializer_4bit.onnx"
 
     if(not Path(model_int4_path).is_file()):
-        model = quant_utils.load_model_with_shape_infer(Path(model_fp32_path))
-        quant = matmul_nbits_quantizer.MatMulNBitsQuantizer(
-            model,
-            accuracy_level=accuracy_level,
-            nodes_to_exclude=None, # specify a list of nodes to exclude from quantization
-            algo_config=quant_config,)
-        quant.process()
-        quant.model.save_model_to_file(model_int4_path, False)
+        _quantize_weight_only(model_fp32_path, model_int4_path, quant_config, None, accuracy_level)
         set_model_matmul_accuracy_level(model_int4_path, model_int4_path, accuracy_level)
 
 
     #quantization of embed (8 bit perché a 4 bit il Gather non viene quantizzato)
-    '''model_fp32_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/madlad_embed.onnx"
-    model_int4_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/madlad_embed_4bit.onnx"
-    
-    if(not Path(model_int4_path).is_file()):
-        model = quant_utils.load_model_with_shape_infer(Path(model_fp32_path))
-        quant = matmul_nbits_quantizer.MatMulNBitsQuantizer(
-            model,
-            accuracy_level=accuracy_level,
-            nodes_to_exclude=None, # specify a list of nodes to exclude from quantization
-            algo_config=quant_config,)
-        quant.process()
-        quant.model.save_model_to_file(model_int4_path, False)
-        set_model_matmul_accuracy_level(model_int4_path, model_int4_path, accuracy_level) 
-    '''
-    
     model_fp32_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/madlad_embed.onnx"
     model_int8_path=outputFolder + "madlad_embed_8bit.onnx"
 
     if(not Path(model_int8_path).is_file()):
-        quantize_dynamic(Path(model_fp32_path), Path(model_int8_path),
+        _quantize_dynamic_int8(model_fp32_path, model_int8_path)
+
+
+
+
+def _quantize_dynamic_int8(model_fp32_path: str, model_int8_path: str, nodes_to_exclude=None):
+    quantize_dynamic(Path(model_fp32_path), Path(model_int8_path),
                      per_channel=True, reduce_range=True, weight_type=QuantType.QUInt8, op_types_to_quantize=None,
-                     use_external_data_format = False, nodes_to_exclude=None,
+                     use_external_data_format = False, nodes_to_exclude=nodes_to_exclude,
                      extra_options={"EnableSubgraph": False,
                                     "ActivationSymmetric": False,
                                     "WeightSymmetric": False,
                                     "MatMulConstBOnly": True})
+    
+def _quantize_weight_only(model_fp32_path: str, model_int_path: str, quant_config, nodes_to_exclude=None, accuracy_level=None, save_external=False):
+    model = quant_utils.load_model_with_shape_infer(Path(model_fp32_path))
+    quant = matmul_nbits_quantizer.MatMulNBitsQuantizer(
+        model,
+        accuracy_level=accuracy_level,
+        nodes_to_exclude=nodes_to_exclude, # specify a list of nodes to exclude from quantization
+        algo_config=quant_config,)
+    quant.process()
+    quant.model.save_model_to_file(model_int_path, save_external)
 
 
 
-def quantize_madlad_8bit(quality = False, weightOnly = False, outputFolder = "onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Int8/"):
+
+def quantize_madlad_8bit(quality = False, weightOnly = False, qdq = False, outputFolder = "onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Int8/"):
     accuracy_level = 4
 
     quant_config = matmul_nbits_quantizer.DefaultWeightOnlyQuantConfig(
         block_size=128, # 2's exponential and >= 16 (128)
         is_symmetric=False, # if true, quantize to Int4. otherwise, quantize to uint4.
         accuracy_level=accuracy_level, # used by MatMulNbits, see https://github.com/microsoft/onnxruntime/blob/main/docs/ContribOperators.md#attributes-35,
-        quant_format=quant_utils.QuantFormat.QOperator,
+        quant_format = quant_utils.QuantFormat.QDQ if qdq else quant_utils.QuantFormat.QOperator,
         op_types_to_quantize={"MatMul"},
         bits=8)
 
@@ -459,22 +446,9 @@ def quantize_madlad_8bit(quality = False, weightOnly = False, outputFolder = "on
         if(quality):
             nodes_to_exclude = get_DenseReluDense_nodes("onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/encoder_model.onnx")
         if(not weightOnly):
-            quantize_dynamic(Path(model_fp32_path), Path(model_int8_path),
-                     per_channel=True, reduce_range=True, weight_type=QuantType.QUInt8, op_types_to_quantize=None,
-                     use_external_data_format = False, nodes_to_exclude=nodes_to_exclude,
-                     extra_options={"EnableSubgraph": False,
-                                    "ActivationSymmetric": False,
-                                    "WeightSymmetric": False,
-                                    "MatMulConstBOnly": True})
+            _quantize_dynamic_int8(model_fp32_path, model_int8_path, nodes_to_exclude)
         else:
-            model = quant_utils.load_model_with_shape_infer(Path(model_fp32_path))
-            quant = matmul_nbits_quantizer.MatMulNBitsQuantizer(
-                model,
-                accuracy_level=accuracy_level,
-                nodes_to_exclude=nodes_to_exclude, # specify a list of nodes to exclude from quantization
-                algo_config=quant_config,)
-            quant.process()
-            quant.model.save_model_to_file(model_int8_path, False)
+            _quantize_weight_only(model_fp32_path, model_int8_path, quant_config, nodes_to_exclude, accuracy_level)
 
 
     #quantization of decoder
@@ -483,22 +457,9 @@ def quantize_madlad_8bit(quality = False, weightOnly = False, outputFolder = "on
 
     if(not Path(model_int8_path).is_file()):
         if(not weightOnly):
-            quantize_dynamic(Path(model_fp32_path), Path(model_int8_path),
-                     per_channel=True, reduce_range=True, weight_type=QuantType.QUInt8, op_types_to_quantize=None,
-                     use_external_data_format = False, nodes_to_exclude=None,
-                     extra_options={"EnableSubgraph": False,
-                                    "ActivationSymmetric": False,
-                                    "WeightSymmetric": False,
-                                    "MatMulConstBOnly": True})
+            _quantize_dynamic_int8(model_fp32_path, model_int8_path)
         else:
-            model = quant_utils.load_model_with_shape_infer(Path(model_fp32_path))
-            quant = matmul_nbits_quantizer.MatMulNBitsQuantizer(
-                model,
-                accuracy_level=accuracy_level,
-                nodes_to_exclude=None, # specify a list of nodes to exclude from quantization
-                algo_config=quant_config,)
-            quant.process()
-            quant.model.save_model_to_file(model_int8_path, False)
+            _quantize_weight_only(model_fp32_path, model_int8_path, quant_config, None, accuracy_level)
 
 
     #quantization of cache init
@@ -507,22 +468,9 @@ def quantize_madlad_8bit(quality = False, weightOnly = False, outputFolder = "on
 
     if(not Path(model_int8_path).is_file()):
         if(not weightOnly):
-            quantize_dynamic(Path(model_fp32_path), Path(model_int8_path),
-                     per_channel=True, reduce_range=True, weight_type=QuantType.QUInt8, op_types_to_quantize=None,
-                     use_external_data_format = False, nodes_to_exclude=None,
-                     extra_options={"EnableSubgraph": False,
-                                    "ActivationSymmetric": False,
-                                    "WeightSymmetric": False,
-                                    "MatMulConstBOnly": True})
+            _quantize_dynamic_int8(model_fp32_path, model_int8_path)
         else:
-            model = quant_utils.load_model_with_shape_infer(Path(model_fp32_path))
-            quant = matmul_nbits_quantizer.MatMulNBitsQuantizer(
-                model,
-                accuracy_level=accuracy_level,
-                nodes_to_exclude=None, # specify a list of nodes to exclude from quantization
-                algo_config=quant_config,)
-            quant.process()
-            quant.model.save_model_to_file(model_int8_path, False)
+            _quantize_weight_only(model_fp32_path, model_int8_path, quant_config, None, accuracy_level)
 
 
     #quantization of embed (8 bit perché a 4 bit il Gather non viene quantizzato)
@@ -531,22 +479,9 @@ def quantize_madlad_8bit(quality = False, weightOnly = False, outputFolder = "on
 
     if(not Path(model_int8_path).is_file()):
         if(not weightOnly):
-            quantize_dynamic(Path(model_fp32_path), Path(model_int8_path),
-                     per_channel=True, reduce_range=True, weight_type=QuantType.QUInt8, op_types_to_quantize=None,
-                     use_external_data_format = False, nodes_to_exclude=None,
-                     extra_options={"EnableSubgraph": False,
-                                    "ActivationSymmetric": False,
-                                    "WeightSymmetric": False,
-                                    "MatMulConstBOnly": True})
+            _quantize_dynamic_int8(model_fp32_path, model_int8_path)
         else:
-            model = quant_utils.load_model_with_shape_infer(Path(model_fp32_path))
-            quant = matmul_nbits_quantizer.MatMulNBitsQuantizer(
-                model,
-                accuracy_level=accuracy_level,
-                nodes_to_exclude=None, # specify a list of nodes to exclude from quantization
-                algo_config=quant_config,)
-            quant.process()
-            quant.model.save_model_to_file(model_int8_path, False)
+            _quantize_weight_only(model_fp32_path, model_int8_path, quant_config, None, accuracy_level)
 
 
 def set_model_matmul_accuracy_level(input_path: PathLike, output_path: PathLike, accuracy_level: int):
@@ -665,7 +600,7 @@ def get_DenseReluDense_nodes(path):
 
     list = []
     for node in nodes:
-        if(("DenseReluDense/wo" in node.name) and ("MatMul" in node.name)):
+        if(("DenseReluDense/" in node.name) and ("MatMul" in node.name)):   #DenseReluDense/wo
             list.append(node.name)
             print(node.name)
     print("")
@@ -683,32 +618,20 @@ if __name__ == '__main__':
 
     #quantize_madlad_8bit(quality=False, weightOnly=False, outputFolder="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Int8/")
     #quantize_madlad_8bit(quality=True, weightOnly=False, outputFolder="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Int8Quality/")
-    #quantize_madlad_8bit(quality=False, weightOnly=True, outputFolder="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Int8WO/")
+    quantize_madlad_8bit(quality=False, qdq=True, weightOnly=True, outputFolder="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTNqdq/")
 
-    quantize_madlad_4bit(qdq=False, outputFolder="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTNqdq/")
-
+    #quantize_madlad_4bit(qdq=False, quality=True, outputFolder="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTNQuality+/")
+    
     '''onnx_execution.compare_models_quality_multi_language(
         initializer_path="onnx/Madlad/Optimum_Cache_Optimized/cache_initializer.onnx",
         encoder_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/encoder_model.onnx",
         decoder_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/decoder_model.onnx",
         embed_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/madlad_embed.onnx",
-        initializer_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTNqdq/madlad_cache_initializer_4bit.onnx",
-        encoder_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTNqdq/madlad_encoder_4bit.onnx",
-        decoder_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTNqdq/madlad_decoder_4bit.onnx",
-        embed_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTNqdq/madlad_embed_8bit.onnx",
-        modelType = onnx_execution.ModelType.MADLAD, logFile = True, logFileFolder = "onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Quality/RTNqdq/", logFileName = "madlad_quality_Int4"
-    )
-    
-    onnx_execution.compare_models_quality_multi_language(
-        initializer_path="onnx/Madlad/Optimum_Cache_Optimized/cache_initializer.onnx",
-        encoder_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/encoder_model.onnx",
-        decoder_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/decoder_model.onnx",
-        embed_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/madlad_embed.onnx",
-        initializer_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Int8Quality/madlad_cache_initializer_8bit.onnx",
-        encoder_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Int8Quality/madlad_encoder_8bit.onnx",
-        decoder_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Int8Quality/madlad_decoder_8bit.onnx",
-        embed_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Int8Quality/madlad_embed_8bit.onnx",
-        modelType = onnx_execution.ModelType.MADLAD, logFile = True, logFileFolder = "onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Quality/Int8Quality/", logFileName = "madlad_quality_Int8_q"
+        initializer_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTNQuality+/madlad_cache_initializer_4bit.onnx",
+        encoder_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTNQuality+/madlad_encoder_4bit.onnx",
+        decoder_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTNQuality+/madlad_decoder_4bit.onnx",
+        embed_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTNQuality+/madlad_embed_8bit.onnx",
+        modelType = onnx_execution.ModelType.MADLAD, logFile = True, logFileFolder = "onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Quality/RTNQuality+/", logFileName = "madlad_quality_Int4"
     )
 
     onnx_execution.compare_models_quality_multi_language(
@@ -716,11 +639,23 @@ if __name__ == '__main__':
         encoder_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/encoder_model.onnx",
         decoder_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/decoder_model.onnx",
         embed_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/madlad_embed.onnx",
-        initializer_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Int8WO/madlad_cache_initializer_8bit.onnx",
+        initializer_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTNQuality+/madlad_cache_initializer_4bit.onnx",
         encoder_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Int8WO/madlad_encoder_8bit.onnx",
-        decoder_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Int8WO/madlad_decoder_8bit.onnx",
-        embed_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Int8WO/madlad_embed_8bit.onnx",
-        modelType = onnx_execution.ModelType.MADLAD, logFile = True, logFileFolder = "onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Quality/Int8WO/", logFileName = "madlad_quality_Int8_wo"
+        decoder_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTNQuality+/madlad_decoder_4bit.onnx",
+        embed_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTNQuality+/madlad_embed_8bit.onnx",
+        modelType = onnx_execution.ModelType.MADLAD, logFile = True, logFileFolder = "onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Quality/RTNQuality+Int8/", logFileName = "madlad_quality_Int8_Int4"
+    )
+
+    onnx_execution.compare_models_quality_multi_language(
+        initializer_path="onnx/Madlad/Optimum_Cache_Optimized/cache_initializer.onnx",
+        encoder_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/encoder_model.onnx",
+        decoder_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/decoder_model.onnx",
+        embed_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/madlad_embed.onnx",
+        initializer_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTNQuality/madlad_cache_initializer_4bit.onnx",
+        encoder_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTNQuality/madlad_encoder_4bit.onnx",
+        decoder_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTNQuality/madlad_decoder_4bit.onnx",
+        embed_quant_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTNQuality/madlad_embed_8bit.onnx",
+        modelType = onnx_execution.ModelType.MADLAD, logFile = True, logFileFolder = "onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Quality/RTNQuality/", logFileName = "madlad_quality_Int4"
     )'''
 
     #create_madlad_final_model(True) 
