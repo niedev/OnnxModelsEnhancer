@@ -837,6 +837,7 @@ def compare_models_quality(
     similarity_score_avg = 0
     for dataComplete in dataset:
         data = dataComplete['translation']
+        if("íhVÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿþÿÿÿReceive Time OutðËìv ÿÿÿÿÿÿÿÿÿÿÿÿ" in data[src]): continue  #used to skip a problematic input
         try:
             if(modelType == ModelType.NLLB):
                 #esecuzione con encoder e decoder normali
