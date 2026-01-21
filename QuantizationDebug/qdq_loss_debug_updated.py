@@ -64,6 +64,9 @@ _TENSOR_SAVE_POSTFIX = "_ReshapedSavedOutput"
 _TENSOR_SAVE_POSTFIX_LEN = len(_TENSOR_SAVE_POSTFIX)
 
 TENSOR_NAME_QUANT_SUFFIX_ALT = "_DQ_Q4"
+TENSOR_NAME_QUANT_SUFFIX_ALT2 = "_DQ_Q8"
+TENSOR_NAME_QUANT_SUFFIX_ALT3 = "_Q4"
+TENSOR_NAME_QUANT_SUFFIX_ALT4 = "_Q8"
 DEQUANT_OUTPUT_SUFFIX_ALT = "_DQ_Q4_output"
 MATMUL_OUTPUT_POSTFIX = "_output_0"
 
@@ -337,7 +340,7 @@ def _run_dequantize_linear(
         return (weight_tensor.astype(numpy.float32) - weight_zp.astype(numpy.float32)) * weight_scale.astype(numpy.float32)
 
     # ---- per-axis ----
-    if weight_scale.ndim == 1:
+    if weight_scale.ndim == 1 and block_size == 0:
         if weight_scale.shape[0] != weight_tensor.shape[axis]:
             raise ValueError(
                 f"Per-axis expects scale len == weight.shape[axis]; "
@@ -395,6 +398,107 @@ def _run_dequantize_linear(
         f"Unsupported DequantizeLinear scale rank: input rank={r}, scale rank={weight_scale.ndim}. "
         "Expected scalar, 1-D (per-axis), or same-rank (blocked)."
     )
+
+
+def _run_dequantize_linear_matmulnbits(
+    B_blob_u8: numpy.ndarray,          # uint8 flat (initializer)
+    scales: numpy.ndarray,             # float16/float32 flat, len = N * n_blocks
+    zero_points_u8: numpy.ndarray | None,  # uint8 flat; may be optional
+    K: int,
+    N: int,
+    bits: int = 4,
+    block_size: int = 128,
+    out_dtype=numpy.float32,
+    return_shape: str = "KxN",      # "KxN" for standard MatMul B, or "NxK" if you want stored layout
+) -> numpy.ndarray:
+    """
+    Reconstructs dequantized weight from com.microsoft::MatMulNBits storage.
+
+    ORT schema: B stored as uint8 with shape [N][n_blocks_per_col][blob_size]
+      n_blocks_per_col = ceil(K / block_size)
+      blob_size = block_size/8 * bits
+    scales shape: [N * n_blocks_per_col]
+    zero_points shape:
+      - [(N * n_blocks_per_col + 1) / 2] if bits <= 4 (2 zp per byte)
+      - [N * n_blocks_per_col]           if bits > 4 (1 zp per byte)
+    """
+    if bits not in (4, 8):
+        raise NotImplementedError("This helper implements bits=4 and bits=8. Extend if you need 2/3/5/6/7.")
+
+    if block_size <= 0 or (block_size & (block_size - 1)) != 0 or block_size < 16:
+        raise ValueError("block_size must be a power of 2 and >= 16 for MatMulNBits.")
+
+    n_blocks = (K + block_size - 1) // block_size
+    blob_size = (block_size // 8) * bits  # per schema
+
+    expected_B = N * n_blocks * blob_size
+    if B_blob_u8.size != expected_B:
+        raise ValueError(f"B blob has {B_blob_u8.size} bytes, expected {expected_B} (=N*n_blocks*blob_size).")
+
+    if scales.size != N * n_blocks:
+        raise ValueError(f"scales has {scales.size} elems, expected {N*n_blocks} (=N*n_blocks).")
+
+    if zero_points_u8 is not None:
+        if bits <= 4:
+            expected_zp = (N * n_blocks + 1) // 2
+        else:
+            expected_zp = N * n_blocks
+        if zero_points_u8.size != expected_zp:
+            raise ValueError(f"zero_points has {zero_points_u8.size} elems, expected {expected_zp}.")
+
+    # reshape B into [N, n_blocks, blob_size]
+    B = B_blob_u8.reshape(N, n_blocks, blob_size)
+
+    # We'll build weight in the logical (stored) orientation: [N, K]
+    W_NK = numpy.empty((N, K), dtype=out_dtype)
+
+    scales_f = scales.astype(out_dtype, copy=False)
+
+    def get_zp(block_index: int) -> int:
+        # block_index in [0, N*n_blocks)
+        if zero_points_u8 is None:
+            # If zero_points is omitted, many symmetric schemes effectively use zp=0 in signed domain,
+            # but MatMulNBits stores uint8. Without a zp tensor, you must know the scheme.
+            # Here we default to 0 (works for true symmetric schemes where q is already signed-ish).
+            return 0
+        if bits <= 4:
+            b = int(zero_points_u8[block_index // 2])
+            return (b & 0x0F) if (block_index % 2 == 0) else (b >> 4)
+        else:
+            return int(zero_points_u8[block_index])
+
+    for n in range(N):
+        for blk in range(n_blocks):
+            block_index = n * n_blocks + blk
+            scale = scales_f[block_index]
+            zp = get_zp(block_index)
+
+            k0 = blk * block_size
+            k1 = min(k0 + block_size, K)
+            valid = k1 - k0
+
+            blob = B[n, blk]  # uint8[blob_size]
+
+            if bits == 8:
+                # blob_size = block_size, values are direct (uint8) for this block
+                q = blob[:valid].astype(out_dtype)
+            else:
+                # bits == 4
+                # blob_size = block_size/2, each byte packs 2 nibbles
+                packed = blob  # length block_size/2
+                # expand to block_size values
+                q_full = numpy.empty(block_size, dtype=numpy.uint8)
+                q_full[0::2] = packed & 0x0F
+                q_full[1::2] = packed >> 4
+                q = q_full[:valid].astype(out_dtype)
+
+            W_NK[n, k0:k1] = (q - out_dtype(zp)) * scale
+
+    if return_shape.upper() == "NXK":
+        return W_NK
+    if return_shape.upper() == "KXN":
+        return W_NK.T
+    raise ValueError("return_shape must be 'KxN' or 'NxK'.")
 
 
 def create_weight_matching(float_model_path: str, qdq_model_path: str) -> dict[str, dict[str, numpy.ndarray]]:
@@ -462,6 +566,99 @@ def create_weight_matching(float_model_path: str, qdq_model_path: str) -> dict[s
             weight_name = weight_name[: -len(TENSOR_NAME_QUANT_SUFFIX_ALT)]
         if weight_quant is None:
             logging.error(f"Model Error in '{qdq_model_path}': '{weight_name}' per-channel quantization on 0 channel")
+            continue
+
+        float_values = find_by_name(weight_name, float_onnx_model.initializer())
+        if not float_values:
+            logging.error(f"Model Error in '{float_model_path}': weight tensor '{weight_name}' not found!")
+            continue
+        weight_float = numpy_helper.to_array(float_values)
+        matched_weights[weight_name] = {"float": weight_float, "dequantized": weight_quant}
+
+    return matched_weights
+
+
+
+def create_weight_matching_qoperator(float_model_path: str, qoperator_model_path: str) -> dict[str, dict[str, numpy.ndarray]]:
+    """Comparing weight values to help debugging accuracy loss due to quantization.
+
+    This functions takes the float model and the qdq model, and provides a data structure for comparing
+    their corresponding weights to locate quantization errors
+
+    Arg:
+        float_model_path: Path points to the float point model.
+        qdq_model_path: Path points to the qdq model.
+
+    Returns:
+        Dict for comparing weight tensors. E.g.
+        ```
+        qdq_weight_cmp = create_weight_matching(float_model, qdq_model)
+        print(qdq_weight_cmp['activation1']['float'])
+        print(qdq_weight_cmp['activation1']['dequantized'])
+        ```
+    """
+    float_onnx_model = ONNXModel(load_model_with_shape_infer(Path(float_model_path)))
+    qdq_onnx_model = ONNXModel(load_model_with_shape_infer(Path(qoperator_model_path)))
+
+    matched_weights: dict[str, dict[str, numpy.ndarray]] = {}
+    initializers = qdq_onnx_model.initializer()
+    for node in qdq_onnx_model.nodes():
+        if node.op_type != "MatMul" and node.op_type != "MatMulNBits":
+            continue  # Only care about MatMul node and variants
+        weight_name: str = node.input[1]
+        weight_values = find_by_name(weight_name, initializers)
+        if not weight_values:
+            continue  # Only care about MatMul node with const B matrix
+        if not (weight_name.endswith((TENSOR_NAME_QUANT_SUFFIX, TENSOR_NAME_QUANT_SUFFIX_ALT, TENSOR_NAME_QUANT_SUFFIX_ALT2, TENSOR_NAME_QUANT_SUFFIX_ALT3, TENSOR_NAME_QUANT_SUFFIX_ALT4))):
+            logging.error(f"Model Error in '{qoperator_model_path}': Dequantized tensor name '{weight_name}' not recognized!")
+            continue
+
+        axis = 0
+        block_size = 0
+        k = -1
+        n = -1
+        bits = 4
+        for attr in node.attribute:
+            if attr.name == "axis":
+                axis = attr.i
+            if(attr.name == "block_size"):
+                block_size = attr.i
+            if(attr.name == "K"):
+                k = attr.i
+            if(attr.name == "N"):
+                n = attr.i
+            if(attr.name == "bits"):
+                bits = attr.i
+
+        weight_tensor = numpy_helper.to_array(weight_values)
+        weight_scale = numpy_helper.to_array(find_by_name(node.input[2], initializers))
+        if len(node.input) > 2:
+            weight_zp = numpy_helper.to_array(find_by_name(node.input[3], initializers))
+        else:
+            weight_zp = numpy.zeros(weight_scale.shape, dtype=numpy.int32)
+
+        # Perform dequantization:
+        if weight_scale.size == weight_zp.size == 1:
+            # Avoids the confusion between a scaler and a tensor of one element.
+            weight_scale = weight_scale.reshape(())
+            weight_zp = weight_zp.reshape(())
+        if weight_scale.shape != weight_zp.shape:
+            raise RuntimeError(
+                f"scale and zero_point must have the same shape but {weight_scale.shape} != {weight_zp.shape}"
+            )
+        weight_quant = _run_dequantize_linear_matmulnbits(weight_tensor, weight_scale, weight_zp, K=k, N=n, bits=bits, block_size=block_size)
+        if(weight_name.endswith(TENSOR_NAME_QUANT_SUFFIX)):
+            weight_name = weight_name[: -len(TENSOR_NAME_QUANT_SUFFIX)]
+        elif(weight_name.endswith(TENSOR_NAME_QUANT_SUFFIX_ALT)):
+            weight_name = weight_name[: -len(TENSOR_NAME_QUANT_SUFFIX_ALT)]
+        elif(weight_name.endswith(TENSOR_NAME_QUANT_SUFFIX_ALT2)):
+            weight_name = weight_name[: -len(TENSOR_NAME_QUANT_SUFFIX_ALT2)]
+        elif(weight_name.endswith(TENSOR_NAME_QUANT_SUFFIX_ALT3)):
+            weight_name = weight_name[: -len(TENSOR_NAME_QUANT_SUFFIX_ALT3)]
+        elif(weight_name.endswith(TENSOR_NAME_QUANT_SUFFIX_ALT4)):
+            weight_name = weight_name[: -len(TENSOR_NAME_QUANT_SUFFIX_ALT4)]
+        if weight_quant is None:
+            logging.error(f"Model Error in '{qoperator_model_path}': '{weight_name}' per-channel quantization on 0 channel")
             continue
 
         float_values = find_by_name(weight_name, float_onnx_model.initializer())
