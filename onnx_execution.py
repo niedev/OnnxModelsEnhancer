@@ -9,8 +9,9 @@ import time
 import datasets
 import onnxruntime
 import torch
-from transformers import NllbTokenizer, T5Tokenizer
+from transformers import NllbTokenizer, T5Tokenizer, AutoTokenizer, AutoConfig, PreTrainedTokenizerBase, GemmaTokenizer
 from strsimpy.normalized_levenshtein import NormalizedLevenshtein
+import numpy as np
 
 
 class TranslationCache:
@@ -45,6 +46,15 @@ class TranslationCache:
             "v1",  # bump when you change logic
             tgt_lang,
             encoder_path, decoder_path, initializer_path, embed_path,
+            text
+        ]).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+    
+    def make_cache_key_gemma3(self, text, src_lang, tgt_lang, decoder_path):
+        payload = "\n".join([
+            "v1",  # bump when you change logic
+            src_lang,
+            tgt_lang, decoder_path,
             text
         ]).encode("utf-8")
         return hashlib.sha256(payload).hexdigest()
@@ -85,7 +95,7 @@ class TranslationCache:
 
 
 
-translation_cache_madlad = TranslationCache(max_items=50000, ttl_s=float('inf'), save_cache_to_file=False)
+translation_cache = TranslationCache(max_items=50000, ttl_s=float('inf'), save_cache_to_file=False)
 
 def onnx_execution(text, src_lang, tgt_lang):
     # caricamento encoder session
@@ -396,9 +406,9 @@ def onnx_execution_madlad_cache_reduced_ram(text, tgt_lang, encoder_path="onnx/M
         embed_path = embed_session._model_path
 
     if(cacheResults):
-        key = translation_cache_madlad.make_cache_key(text, tgt_lang, encoder_path, decoder_path, initializer_path, embed_path)
+        key = translation_cache.make_cache_key(text, tgt_lang, encoder_path, decoder_path, initializer_path, embed_path)
 
-        cached = translation_cache_madlad.get(key)
+        cached = translation_cache.get(key)
         if cached is not None:
             return cached
     
@@ -526,7 +536,7 @@ def onnx_execution_madlad_cache_reduced_ram(text, tgt_lang, encoder_path="onnx/M
     out_text = tokenizer.decode(result)
 
     if(cacheResults):
-        translation_cache_madlad.set(key, out_text)
+        translation_cache.set(key, out_text)
 
     return out_text
 
@@ -799,9 +809,262 @@ def onnx_execution_nllb_cache_reduced_ram(text, src_lang, tgt_lang, encoder_path
     return tokenizer.decode(result)
 
 
+
+def onnx_execution_gemma3_cache_demo():
+    # 1. Load config, processor, and model
+    path_to_model = "./gemma-3-1b-it-ONNX"
+    config = AutoConfig.from_pretrained(path_to_model)
+    tokenizer: GemmaTokenizer = AutoTokenizer.from_pretrained(path_to_model)
+    decoder_session = onnxruntime.InferenceSession(f"{path_to_model}/onnx/model.onnx")
+
+    ## Set config values
+    num_key_value_heads = config.num_key_value_heads
+    head_dim = config.head_dim
+    num_hidden_layers = config.num_hidden_layers
+    eos_token_id = 106 # 106 is for <end_of_turn>
+
+    # 2. Prepare inputs
+    ## Create input messages
+    messages = [
+        { "role": "system", "content": "You are a helpful assistant." },
+        { "role": "user", "content": "Write me a poem about Machine Learning." },
+    ]
+
+    ## Apply tokenizer
+    inputs = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=True, return_dict=True, return_tensors="np")
+
+    ## Prepare decoder inputs
+    batch_size = inputs['input_ids'].shape[0]
+    past_key_values = {
+        f'past_key_values.{layer}.{kv}': np.zeros([batch_size, num_key_value_heads, 0, head_dim], dtype=np.float32)
+        for layer in range(num_hidden_layers)
+        for kv in ('key', 'value')
+    }
+    input_ids = inputs['input_ids']
+    position_ids = np.tile(np.arange(1, input_ids.shape[-1] + 1), (batch_size, 1))
+
+    # 3. Generation loop
+    max_new_tokens = 1024
+    generated_tokens = np.array([[]], dtype=np.int64)
+    for i in range(max_new_tokens):
+        logits, *present_key_values = decoder_session.run(None, dict(
+            input_ids=input_ids,
+            position_ids=position_ids,
+            **past_key_values,
+        ))
+
+        ## Update values for next generation loop
+        input_ids = logits[:, -1].argmax(-1, keepdims=True)
+        position_ids = position_ids[:, -1:] + 1
+        for j, key in enumerate(past_key_values):
+            past_key_values[key] = present_key_values[j]
+
+        generated_tokens = np.concatenate([generated_tokens, input_ids], axis=-1)
+        if (input_ids == eos_token_id).all():
+            break
+
+        ## (Optional) Streaming
+        print(tokenizer.decode(input_ids[0]), end='', flush=True)
+    print()
+
+    # 4. Output result
+    print(tokenizer.batch_decode(generated_tokens))
+
+
+def onnx_execution_gemma3_cache(text, src_lang, tgt_lang,
+                                     decoder_path="onnx/Gemma3/Onnx_q4_0/model.onnx",
+                                     decoder_session=None, log=True, cacheResults=False):
+    #command = "Translate from "+ src_lang +" to "+ tgt_lang +", respond with only the best translation: "
+    #text = command + text
+    decoder_time = 0
+    model_name = 'google/gemma-3-4b-it-qat-int4-unquantized'
+    tokenizer: GemmaTokenizer = AutoTokenizer.from_pretrained(model_name)
+    providers = ['CPUExecutionProvider']  # 'ROCMExecutionProvider',
+
+    messages = [
+        { "role": "system", "content": "Translate from "+src_lang+" to "+tgt_lang+", respond with only the most accurate translation." },
+        { "role": "user", "content": text },
+    ]
+
+    if(decoder_session is not None):
+        decoder_path = decoder_session._model_path
+
+    if(cacheResults):
+        key = translation_cache.make_cache_key_gemma3(text, src_lang, tgt_lang, decoder_path)
+
+        cached = translation_cache.get(key)
+        if cached is not None:
+            return cached
+
+    # caricamento decoder session
+    sess_options = onnxruntime.SessionOptions()
+    sess_options.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_EXTENDED    #ORT_DISABLE_ALL
+    if(decoder_session is None):
+        decoder_session = onnxruntime.InferenceSession(Path(decoder_path), providers=providers, sess_options=sess_options)    
+
+    # vars initialization
+    init_time = time.time()
+    eot_id = tokenizer.convert_tokens_to_ids("<end_of_turn>")
+    output_names = ["logits"]
+    for i in range(34):
+        output_names.append("present."+str(i)+".key")
+        output_names.append("present."+str(i)+".value")
+
+    out = -1
+    result = []
+
+    # prepariamo gli input del decoder
+    input = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=True, return_dict=True, return_tensors="np")    #tokenizer(text, return_tensors='np')
+    input_ids: np.ndarray = input.input_ids
+    attention_mask: np.ndarray = input.attention_mask
+    total_input_len = len(attention_mask[0])
+    input_feed = {"input_ids": input_ids, "attention_mask": attention_mask}
+    for i in range(34):
+        input_feed["past_key_values."+str(i)+".key"] = torch.zeros(1, 4, 0, 256, dtype=torch.float32).numpy()
+        input_feed["past_key_values."+str(i)+".value"] = torch.zeros(1, 4, 0, 256, dtype=torch.float32).numpy()
+
+    while(out != eot_id):
+        # esecuzione del decoder con cache
+        d_time = time.time()
+        decoderOutput = decoder_session.run(output_names, input_feed)
+        decoder_time = decoder_time + (time.time() - d_time)
+
+        total_input_len = total_input_len + 1
+        logits = decoderOutput[0][0][-1]  
+        out = logits.argmax()
+        if(out == eot_id): break
+        result.append(out)
+        if(log):
+            #print(tokenizer.decode(result))
+            print(tokenizer.decode(out), end="", flush=True)  # _convert_id_to_token(out)
+
+        #prepariamo gli input del decoder per la prossima iterazione
+        input_ids = torch.tensor([[out]], dtype=torch.int64).numpy()  #si usa il risultato come unico input_id della prossima iterazione
+        attention_mask = torch.ones(1, total_input_len, dtype=torch.int64).numpy()
+        input_feed = {"input_ids": input_ids, "attention_mask": attention_mask}
+        count = 1
+        for i in range(34):
+            input_feed["past_key_values."+str(i)+".key"] = decoderOutput[count]
+            count = count+1
+            input_feed["past_key_values."+str(i)+".value"] = decoderOutput[count]
+            count = count+1
+
+    if(log): 
+        print()
+        print("Execution done in: " + str(time.time() - init_time) + " s")
+        print("Execution of decoder done in: " + str(decoder_time) + " s")
+
+    out_text = tokenizer.decode(result)
+    if(cacheResults):
+        translation_cache.set(key, out_text)
+    return out_text
+
+
+def onnx_execution_translate_gemma_cache(text, src_lang, tgt_lang,
+                                     decoder_path="onnx/Madlad/Optimum_Cache_Optimized/decoder_with_past_model.onnx",
+                                     decoder_session=None, log=True, cacheResults=False):
+    #command = "Translate from "+ src_lang +" to "+ tgt_lang +", respond with only the best translation: "
+    #text = command + text
+    decoder_time = 0
+    model_name = 'google/translategemma-4b-it'
+    tokenizer: PreTrainedTokenizerBase = AutoTokenizer.from_pretrained(model_name)
+    providers = ['CPUExecutionProvider']  # 'ROCMExecutionProvider',
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "source_lang_code": src_lang,
+                    "target_lang_code": tgt_lang,
+                    "text": text,
+                }
+            ],
+        }
+    ]
+
+    if(decoder_session is not None):
+        decoder_path = decoder_session._model_path
+
+    if(cacheResults):
+        key = translation_cache.make_cache_key_gemma3(text, src_lang, tgt_lang, decoder_path)
+
+        cached = translation_cache.get(key)
+        if cached is not None:
+            return cached
+
+    # caricamento decoder session
+    sess_options = onnxruntime.SessionOptions()
+    sess_options.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_EXTENDED    #ORT_DISABLE_ALL
+    if(decoder_session is None):
+        decoder_session = onnxruntime.InferenceSession(Path(decoder_path), providers=providers, sess_options=sess_options)    
+
+    # vars initialization
+    init_time = time.time()
+    eot_id = tokenizer.convert_tokens_to_ids("<end_of_turn>")
+    output_names = ["logits"]
+    for i in range(34):
+        output_names.append("present."+str(i)+".key")
+        output_names.append("present."+str(i)+".value")
+
+    out = -1
+    result = []
+
+    # prepariamo gli input del decoder
+    input = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=True, return_dict=True, return_tensors="np")    #tokenizer(text, return_tensors='np')
+    input_ids: np.ndarray = input.input_ids
+    attention_mask: np.ndarray = input.attention_mask
+    #print(input_ids)
+    #print(attention_mask)
+    total_input_len = len(attention_mask[0])
+    input_feed = {"input_ids": input_ids, "attention_mask": attention_mask}
+    for i in range(34):
+        input_feed["past_key_values."+str(i)+".key"] = torch.zeros(1, 4, 0, 256, dtype=torch.float32).numpy()
+        input_feed["past_key_values."+str(i)+".value"] = torch.zeros(1, 4, 0, 256, dtype=torch.float32).numpy()
+
+    while(out != eot_id):
+        # esecuzione del decoder con cache
+        d_time = time.time()
+        decoderOutput = decoder_session.run(output_names, input_feed)
+        decoder_time = decoder_time + (time.time() - d_time)
+
+        total_input_len = total_input_len + 1
+        logits = decoderOutput[0][0][-1]  
+        out = logits.argmax()
+        if(out == eot_id): break
+        result.append(out)
+        if(log):
+            #print(tokenizer.decode(result))
+            print(tokenizer.decode(out), end="", flush=True)  # _convert_id_to_token(out)
+
+        #prepariamo gli input del decoder per la prossima iterazione
+        input_ids = torch.tensor([[out]], dtype=torch.int64).numpy()  #si usa il risultato come unico input_id della prossima iterazione
+        attention_mask = torch.ones(1, total_input_len, dtype=torch.int64).numpy()
+        input_feed = {"input_ids": input_ids, "attention_mask": attention_mask}
+        count = 1
+        for i in range(34):
+            input_feed["past_key_values."+str(i)+".key"] = decoderOutput[count]
+            count = count+1
+            input_feed["past_key_values."+str(i)+".value"] = decoderOutput[count]
+            count = count+1
+
+    if(log): 
+        print()
+        print("Execution done in: " + str(time.time() - init_time) + " s")
+        print("Execution of decoder done in: " + str(decoder_time) + " s")
+
+    out_text = tokenizer.decode(result)
+    if(cacheResults):
+        translation_cache.set(key, out_text)
+    return out_text
+
+
+
 class ModelType(enum.Enum):
     NLLB = 1
     MADLAD = 2
+    GEMMA3 = 3
 
 def compare_models_quality(
         initializer_path="onnx/Madlad/Optimum_Cache_Optimized/cache_initializer.onnx",
@@ -815,19 +1078,24 @@ def compare_models_quality(
         data_dir = "en-it", src_lan="eng_Latn", tgt_lan="it", modelType = ModelType.MADLAD, logFile = False, logFileFolder = "/Quality/HQQPerf/", logFileName = "madlad_quality_HQQPerf"
     ):
     
-    dataset = datasets.load_dataset("opus100", split="validation[150:250]", data_dir=data_dir)
+    dataset = datasets.load_dataset("Helsinki-NLP/opus-100", split="validation[150:250]", name=data_dir)
 
     providers = ['CPUExecutionProvider']
 
-    initializer_session = onnxruntime.InferenceSession(Path(initializer_path), providers=providers)
-    encoder_session = onnxruntime.InferenceSession(Path(encoder_path), providers=providers)
-    decoder_session = onnxruntime.InferenceSession(Path(decoder_path), providers=providers)
-    embed_session = onnxruntime.InferenceSession(Path(embed_path), providers=providers)
+    if(modelType != ModelType.GEMMA3):
+        initializer_session = onnxruntime.InferenceSession(Path(initializer_path), providers=providers)
+        encoder_session = onnxruntime.InferenceSession(Path(encoder_path), providers=providers)
+        decoder_session = onnxruntime.InferenceSession(Path(decoder_path), providers=providers)
+        embed_session = onnxruntime.InferenceSession(Path(embed_path), providers=providers)
 
-    initializer_session_quantized = onnxruntime.InferenceSession(Path(initializer_quant_path), providers=providers)
-    encoder_session_quantized = onnxruntime.InferenceSession(Path(encoder_quant_path), providers=providers)
-    decoder_session_quantized = onnxruntime.InferenceSession(Path(decoder_quant_path), providers=providers)
-    embed_session_quantized = onnxruntime.InferenceSession(Path(embed_quant_path), providers=providers)
+        initializer_session_quantized = onnxruntime.InferenceSession(Path(initializer_quant_path), providers=providers)
+        encoder_session_quantized = onnxruntime.InferenceSession(Path(encoder_quant_path), providers=providers)
+        decoder_session_quantized = onnxruntime.InferenceSession(Path(decoder_quant_path), providers=providers)
+        embed_session_quantized = onnxruntime.InferenceSession(Path(embed_quant_path), providers=providers)
+    else:
+        decoder_session = onnxruntime.InferenceSession(Path(decoder_path), providers=providers)
+
+        decoder_session_quantized = onnxruntime.InferenceSession(Path(decoder_quant_path), providers=providers)
 
     src = data_dir.split('-')[0]
 
@@ -844,12 +1112,17 @@ def compare_models_quality(
                 result = onnx_execution_nllb_cache_reduced_ram(data[src], src_lan, tgt_lan, encoder_session=encoder_session, decoder_session=decoder_session, initializer_session=initializer_session, embed_and_lm_head_session=embed_session, log=False)
                 #esecuzione con encoder e decoder quantizzati
                 result_quantized = onnx_execution_nllb_cache_reduced_ram(data[src], src_lan, tgt_lan, encoder_session=encoder_session_quantized, decoder_session=decoder_session_quantized, initializer_session=initializer_session_quantized, embed_and_lm_head_session=embed_session_quantized, log=False)
-            else:
+            elif(modelType == ModelType.MADLAD):
                 #esecuzione con encoder e decoder normali
                 result = onnx_execution_madlad_cache_reduced_ram(data[src], tgt_lan, encoder_session=encoder_session, decoder_session=decoder_session, initializer_session=initializer_session, embed_session=embed_session, log=False, cacheResults=True)
                 #esecuzione con encoder e decoder quantizzati
                 result_quantized = onnx_execution_madlad_cache_reduced_ram(data[src], tgt_lan, encoder_session=encoder_session_quantized, decoder_session=decoder_session_quantized, initializer_session=initializer_session_quantized, embed_session=embed_session_quantized, log=False, cacheResults=False)
-            
+            else:
+                #esecuzione con decoder normale
+                result = onnx_execution_gemma3_cache(data[src], src_lan, tgt_lan, decoder_session=decoder_session, log=False, cacheResults=True)
+                #esecuzione con decoder quantizzato
+                result_quantized = onnx_execution_gemma3_cache(data[src], src_lan, tgt_lan, decoder_session=decoder_session_quantized, log=False, cacheResults=False)
+
             similarity_score = 1
             if(result != result_quantized):
                 print('')
@@ -906,57 +1179,44 @@ def compare_models_quality_multi_language(
     
     if(logFile):
         os.makedirs(logFileFolder, exist_ok=True)
-    
+
+    src_languages = []
+    tgt_languages = []
     if(modelType == ModelType.NLLB):
-        similarity_score_en_it = compare_models_quality(initializer_path, encoder_path, decoder_path, embed_path, initializer_quant_path,
-                                                        encoder_quant_path, decoder_quant_path, embed_quant_path,
-                                                        data_dir="en-it", src_lan="eng_Latn", tgt_lan="ita_Latn", modelType=ModelType.NLLB,
-                                                        logFile=logFile, logFileFolder=logFileFolder, logFileName=logFileName)  #english to italian
-        similarity_score_en_zh = compare_models_quality(initializer_path, encoder_path, decoder_path, embed_path, initializer_quant_path,
-                                                        encoder_quant_path, decoder_quant_path, embed_quant_path,
-                                                        data_dir="en-zh", src_lan="eng_Latn", tgt_lan="zho_Hans", modelType=ModelType.NLLB,
-                                                        logFile=logFile, logFileFolder=logFileFolder, logFileName=logFileName)  #english to chinese (simplified)
-        similarity_score_en_ja = compare_models_quality(initializer_path, encoder_path, decoder_path, embed_path, initializer_quant_path,
-                                                        encoder_quant_path, decoder_quant_path, embed_quant_path,
-                                                        data_dir="en-ja", src_lan="eng_Latn", tgt_lan="jpn_Jpan", modelType=ModelType.NLLB,
-                                                        logFile=logFile, logFileFolder=logFileFolder, logFileName=logFileName)  #english to japanese
-        similarity_score_en_es = compare_models_quality(initializer_path, encoder_path, decoder_path, embed_path, initializer_quant_path,
-                                                        encoder_quant_path, decoder_quant_path, embed_quant_path,
-                                                        data_dir="en-es", src_lan="eng_Latn", tgt_lan="spa_Latn", modelType=ModelType.NLLB,
-                                                        logFile=logFile, logFileFolder=logFileFolder, logFileName=logFileName)  #english to spanish
-        similarity_score_en_fr = compare_models_quality(initializer_path, encoder_path, decoder_path, embed_path, initializer_quant_path,
-                                                        encoder_quant_path, decoder_quant_path, embed_quant_path,
-                                                        data_dir="en-fr", src_lan="eng_Latn", tgt_lan="fra_Latn", modelType=ModelType.NLLB,
-                                                        logFile=logFile, logFileFolder=logFileFolder, logFileName=logFileName)  #english to french
-        similarity_score_de_en = compare_models_quality(initializer_path, encoder_path, decoder_path, embed_path, initializer_quant_path,
-                                                        encoder_quant_path, decoder_quant_path, embed_quant_path,
-                                                        data_dir="de-en", src_lan="deu_Latn", tgt_lan="eng_Latn", modelType=ModelType.NLLB,
-                                                        logFile=logFile, logFileFolder=logFileFolder, logFileName=logFileName)  #german to english
-    else:
-        similarity_score_en_it = compare_models_quality(initializer_path, encoder_path, decoder_path, embed_path, initializer_quant_path,
-                                                        encoder_quant_path, decoder_quant_path, embed_quant_path,
-                                                        data_dir="en-it", tgt_lan="it", logFile=logFile,
-                                                        logFileFolder=logFileFolder, logFileName=logFileName)   #english to italian
-        similarity_score_en_zh = compare_models_quality(initializer_path, encoder_path, decoder_path, embed_path, initializer_quant_path,
-                                                        encoder_quant_path, decoder_quant_path, embed_quant_path,
-                                                        data_dir="en-zh", tgt_lan="zh", logFile=logFile,
-                                                        logFileFolder=logFileFolder, logFileName=logFileName)  #english to chinese (simplified)
-        similarity_score_en_ja = compare_models_quality(initializer_path, encoder_path, decoder_path, embed_path, initializer_quant_path,
-                                                        encoder_quant_path, decoder_quant_path, embed_quant_path,
-                                                        data_dir="en-ja", tgt_lan="jp", logFile=logFile,
-                                                        logFileFolder=logFileFolder, logFileName=logFileName)  #english to japanese
-        similarity_score_en_es = compare_models_quality(initializer_path, encoder_path, decoder_path, embed_path, initializer_quant_path,
-                                                        encoder_quant_path, decoder_quant_path, embed_quant_path,
-                                                        data_dir="en-es", tgt_lan="es", logFile=logFile,
-                                                        logFileFolder=logFileFolder, logFileName=logFileName)  #english to spanish
-        similarity_score_en_fr = compare_models_quality(initializer_path, encoder_path, decoder_path, embed_path, initializer_quant_path,
-                                                        encoder_quant_path, decoder_quant_path, embed_quant_path,
-                                                        data_dir="en-fr", tgt_lan="fr", logFile=logFile,
-                                                        logFileFolder=logFileFolder, logFileName=logFileName)  #english to french
-        similarity_score_de_en = compare_models_quality(initializer_path, encoder_path, decoder_path, embed_path, initializer_quant_path,
-                                                        encoder_quant_path, decoder_quant_path, embed_quant_path,
-                                                        data_dir="de-en", tgt_lan="en", logFile=logFile,
-                                                        logFileFolder=logFileFolder, logFileName=logFileName)  #german to english
+        src_languages = ["eng_Latn", "eng_Latn", "eng_Latn", "eng_Latn", "eng_Latn", "deu_Latn"]
+        tgt_languages = ["ita_Latn", "zho_Hans", "jpn_Jpan", "spa_Latn", "fra_Latn", "eng_Latn"]
+    elif(modelType == ModelType.MADLAD):
+        src_languages = ["en", "en", "en", "en", "en", "de"]
+        tgt_languages = ["it", "zh", "jp", "es", "fr", "en"]
+    elif(modelType == ModelType.GEMMA3):
+        src_languages = ["English", "English", "English", "English", "English", "German"]
+        tgt_languages = ["Italian", "Chinese", "Japanese", "Spanish", "French", "English"]
+
+    similarity_score_en_it = compare_models_quality(initializer_path, encoder_path, decoder_path, embed_path, initializer_quant_path,
+                                                    encoder_quant_path, decoder_quant_path, embed_quant_path,
+                                                    data_dir="en-it", src_lan=src_languages[0], tgt_lan=tgt_languages[0], modelType=modelType,
+                                                    logFile=logFile, logFileFolder=logFileFolder, logFileName=logFileName)  #english to italian
+    similarity_score_en_zh = compare_models_quality(initializer_path, encoder_path, decoder_path, embed_path, initializer_quant_path,
+                                                    encoder_quant_path, decoder_quant_path, embed_quant_path,
+                                                    data_dir="en-zh", src_lan=src_languages[1], tgt_lan=tgt_languages[1], modelType=modelType,
+                                                    logFile=logFile, logFileFolder=logFileFolder, logFileName=logFileName)  #english to chinese (simplified)
+    similarity_score_en_ja = compare_models_quality(initializer_path, encoder_path, decoder_path, embed_path, initializer_quant_path,
+                                                    encoder_quant_path, decoder_quant_path, embed_quant_path,
+                                                    data_dir="en-ja", src_lan=src_languages[2], tgt_lan=tgt_languages[2], modelType=modelType,
+                                                    logFile=logFile, logFileFolder=logFileFolder, logFileName=logFileName)  #english to japanese
+    similarity_score_en_es = compare_models_quality(initializer_path, encoder_path, decoder_path, embed_path, initializer_quant_path,
+                                                    encoder_quant_path, decoder_quant_path, embed_quant_path,
+                                                    data_dir="en-es", src_lan=src_languages[3], tgt_lan=tgt_languages[3], modelType=modelType,
+                                                    logFile=logFile, logFileFolder=logFileFolder, logFileName=logFileName)  #english to spanish
+    similarity_score_en_fr = compare_models_quality(initializer_path, encoder_path, decoder_path, embed_path, initializer_quant_path,
+                                                    encoder_quant_path, decoder_quant_path, embed_quant_path,
+                                                    data_dir="en-fr", src_lan=src_languages[4], tgt_lan=tgt_languages[4], modelType=modelType,
+                                                    logFile=logFile, logFileFolder=logFileFolder, logFileName=logFileName)  #english to french
+    similarity_score_de_en = compare_models_quality(initializer_path, encoder_path, decoder_path, embed_path, initializer_quant_path,
+                                                    encoder_quant_path, decoder_quant_path, embed_quant_path,
+                                                    data_dir="de-en", src_lan=src_languages[5], tgt_lan=tgt_languages[5], modelType=modelType,
+                                                    logFile=logFile, logFileFolder=logFileFolder, logFileName=logFileName)  #german to english
+        
 
     similarity_score_avg = (similarity_score_en_it + similarity_score_en_zh + similarity_score_en_ja + similarity_score_en_es + similarity_score_en_fr + similarity_score_de_en)/6
 

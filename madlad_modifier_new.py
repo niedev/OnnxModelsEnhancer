@@ -618,7 +618,7 @@ if __name__ == '__main__':
 
     #quantize_madlad_8bit(quality=False, weightOnly=False, outputFolder="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Int8/")
     #quantize_madlad_8bit(quality=True, weightOnly=False, outputFolder="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/Int8Quality/")
-    quantize_madlad_8bit(quality=False, qdq=True, weightOnly=True, outputFolder="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTNqdq/")
+    #quantize_madlad_8bit(quality=False, qdq=True, weightOnly=True, outputFolder="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTNqdq/")
 
     #quantize_madlad_4bit(qdq=False, quality=True, outputFolder="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/RTNQuality+/")
     
