@@ -457,10 +457,8 @@ def _run_dequantize_linear_matmulnbits(
     def get_zp(block_index: int) -> int:
         # block_index in [0, N*n_blocks)
         if zero_points_u8 is None:
-            # If zero_points is omitted, many symmetric schemes effectively use zp=0 in signed domain,
-            # but MatMulNBits stores uint8. Without a zp tensor, you must know the scheme.
-            # Here we default to 0 (works for true symmetric schemes where q is already signed-ish).
-            return 0
+            # If zero_points is omitted, we return the default zero point 2^(bits - 1), according to MatMulNBits documentation
+            return pow(2, bits-1)
         if bits <= 4:
             b = int(zero_points_u8[block_index // 2])
             return (b & 0x0F) if (block_index % 2 == 0) else (b >> 4)
@@ -632,20 +630,18 @@ def create_weight_matching_qoperator(float_model_path: str, qoperator_model_path
 
         weight_tensor = numpy_helper.to_array(weight_values)
         weight_scale = numpy_helper.to_array(find_by_name(node.input[2], initializers))
-        if len(node.input) > 2:
+        weight_zp: None | numpy.ndarray = None
+        if len(node.input) > 3:
             weight_zp = numpy_helper.to_array(find_by_name(node.input[3], initializers))
-        else:
-            weight_zp = numpy.zeros(weight_scale.shape, dtype=numpy.int32)
 
         # Perform dequantization:
-        if weight_scale.size == weight_zp.size == 1:
+        if weight_scale.size == 1:
             # Avoids the confusion between a scaler and a tensor of one element.
             weight_scale = weight_scale.reshape(())
+        if (weight_zp is not None and weight_zp.size == 1):
+            # Avoids the confusion between a scaler and a tensor of one element.
             weight_zp = weight_zp.reshape(())
-        if weight_scale.shape != weight_zp.shape:
-            raise RuntimeError(
-                f"scale and zero_point must have the same shape but {weight_scale.shape} != {weight_zp.shape}"
-            )
+
         weight_quant = _run_dequantize_linear_matmulnbits(weight_tensor, weight_scale, weight_zp, K=k, N=n, bits=bits, block_size=block_size)
         if(weight_name.endswith(TENSOR_NAME_QUANT_SUFFIX)):
             weight_name = weight_name[: -len(TENSOR_NAME_QUANT_SUFFIX)]
