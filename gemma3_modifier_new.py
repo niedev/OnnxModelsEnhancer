@@ -27,8 +27,8 @@ en_text = "Also unlike 2014, there aren’t nearly as many loopholes. You can’
 
 def create_gemma3_final_model():
     convert_gemma3_cache_optimum(False)
-    convert_gemma3_cache_optimum(True)
-    #quantize_gemma3_4bit()
+    #convert_gemma3_cache_optimum(True)
+    quantize_gemma3_4bit()
 
 
 
@@ -87,18 +87,18 @@ def convert_gemma3_cache_optimum(quantize = False):
         create_model(model_name=model_name, input_path=save_directory, output_dir=save_onnx_directory, precision=("int4" if quantize else "fp32"), execution_provider="cpu", cache_dir=TRANSFORMERS_CACHE, extra_options=extra_options)
 
 
-def quantize_gemma3_4bit(outputFolder = "onnx/Gemma3/Onnx/Quantized/"):
+def quantize_gemma3_4bit(outputFolder = "onnx/TranslateGemma/Onnx/Quantized/RTN32/"):
     accuracy_level = 4
     quant_config = matmul_nbits_quantizer.DefaultWeightOnlyQuantConfig(
-        block_size=128, # 2's exponential and >= 16 (128)
+        block_size=32, # 2's exponential and >= 16 (128)
         is_symmetric=False, # if true, quantize to Int4. otherwise, quantize to uint4.
         accuracy_level=4, # used by MatMulNbits, see https://github.com/microsoft/onnxruntime/blob/main/docs/ContribOperators.md#attributes-35,
         quant_format = quant_utils.QuantFormat.QOperator,
         op_types_to_quantize={"MatMul", "Gather"})
     
     #quantization of decoder
-    model_fp32_path="onnx/Gemma3/Onnx/model.onnx"
-    model_int4_path=outputFolder + "gemma3_decoder_4bit.onnx"
+    model_fp32_path="onnx/TranslateGemma/Onnx/model.onnx"
+    model_int4_path=outputFolder + "translate_gemma_decoder_4bit.onnx"
     model_int4_8_path=outputFolder + "gemma3_decoder_4-8bit.onnx"
 
     if(not Path(model_int4_path).is_file()):
@@ -133,10 +133,17 @@ def _quantize_dynamic_int8(model_fp32_path: str, model_int8_path: str, nodes_to_
 if __name__ == '__main__':
    #create_gemma3_final_model()
    #onnx_execution.onnx_execution_gemma3_cache(text=en_text, src_lang="English", tgt_lang="Italian", decoder_path="onnx/Gemma3/Onnx/Quantized/gemma3_decoder_4bit.onnx")
-   onnx_execution.onnx_execution_translate_gemma_cache(text=en_text, src_lang="en", tgt_lang="it", decoder_path="onnx/TranslateGemma/Onnx/Quantized/model.onnx")
+   #onnx_execution.onnx_execution_translate_gemma_cache(text=en_text, src_lang="en", tgt_lang="it", decoder_path="onnx/TranslateGemma/Onnx/Quantized/RTN32/gemma3_decoder_4bit.onnx")
 
    '''onnx_execution.compare_models_quality_multi_language(
-        decoder_path="onnx/Gemma3/Onnx_q4_0/model.onnx",
-        decoder_quant_path="onnx/Gemma3/Onnx_q4_0/Quantized/model.onnx",
-        modelType = onnx_execution.ModelType.GEMMA3, logFile = True, logFileFolder = "onnx/Gemma3/Onnx_q4_0/Quantized/Quality/RTN_q4_0/", logFileName = "gemma3_quality_Int4"
+        decoder_path="onnx/TranslateGemma/Onnx/model.onnx",
+        decoder_quant_path="onnx/TranslateGemma/Onnx/Quantized/RTN32/gemma3_decoder_4bit.onnx",
+        modelType = onnx_execution.ModelType.TRANSLATEGEMMA, logFile = True, logFileFolder = "onnx/TranslateGemma/Onnx/Quantized/Quality/RTN32/", logFileName = "translate_gemma_quality_Int4"
     )'''
+   
+   onnx_execution.compare_models_quality(
+        decoder_path="onnx/TranslateGemma/Onnx/model.onnx",
+        decoder_quant_path="onnx/TranslateGemma/Onnx/Quantized/RTN32/gemma3_decoder_4bit.onnx",
+        modelType = onnx_execution.ModelType.TRANSLATEGEMMA, logFile = True, logFileFolder = "onnx/TranslateGemma/Onnx/Quantized/Quality/RTN32/", logFileName = "translate_gemma_quality_Int4",
+        data_dir="en-ja", src_lan="en", tgt_lan="ja"
+    )

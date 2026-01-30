@@ -1017,6 +1017,7 @@ def onnx_execution_translate_gemma_cache(text, src_lang, tgt_lang,
     attention_mask: np.ndarray = input.attention_mask
     #print(input_ids)
     #print(attention_mask)
+    #print(tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False))
     total_input_len = len(attention_mask[0])
     input_feed = {"input_ids": input_ids, "attention_mask": attention_mask}
     for i in range(34):
@@ -1065,6 +1066,7 @@ class ModelType(enum.Enum):
     NLLB = 1
     MADLAD = 2
     GEMMA3 = 3
+    TRANSLATEGEMMA = 4
 
 def compare_models_quality(
         initializer_path="onnx/Madlad/Optimum_Cache_Optimized/cache_initializer.onnx",
@@ -1117,11 +1119,16 @@ def compare_models_quality(
                 result = onnx_execution_madlad_cache_reduced_ram(data[src], tgt_lan, encoder_session=encoder_session, decoder_session=decoder_session, initializer_session=initializer_session, embed_session=embed_session, log=False, cacheResults=True)
                 #esecuzione con encoder e decoder quantizzati
                 result_quantized = onnx_execution_madlad_cache_reduced_ram(data[src], tgt_lan, encoder_session=encoder_session_quantized, decoder_session=decoder_session_quantized, initializer_session=initializer_session_quantized, embed_session=embed_session_quantized, log=False, cacheResults=False)
-            else:
+            elif(modelType == ModelType.GEMMA3):
                 #esecuzione con decoder normale
                 result = onnx_execution_gemma3_cache(data[src], src_lan, tgt_lan, decoder_session=decoder_session, log=False, cacheResults=True)
                 #esecuzione con decoder quantizzato
                 result_quantized = onnx_execution_gemma3_cache(data[src], src_lan, tgt_lan, decoder_session=decoder_session_quantized, log=False, cacheResults=False)
+            elif(modelType == ModelType.TRANSLATEGEMMA):
+                #esecuzione con decoder normale
+                result = onnx_execution_translate_gemma_cache(data[src], src_lan, tgt_lan, decoder_session=decoder_session, log=False, cacheResults=True)
+                #esecuzione con decoder quantizzato
+                result_quantized = onnx_execution_translate_gemma_cache(data[src], src_lan, tgt_lan, decoder_session=decoder_session_quantized, log=False, cacheResults=False)
 
             similarity_score = 1
             if(result != result_quantized):
@@ -1185,9 +1192,9 @@ def compare_models_quality_multi_language(
     if(modelType == ModelType.NLLB):
         src_languages = ["eng_Latn", "eng_Latn", "eng_Latn", "eng_Latn", "eng_Latn", "deu_Latn"]
         tgt_languages = ["ita_Latn", "zho_Hans", "jpn_Jpan", "spa_Latn", "fra_Latn", "eng_Latn"]
-    elif(modelType == ModelType.MADLAD):
+    elif(modelType == ModelType.MADLAD or modelType == ModelType.TRANSLATEGEMMA ):
         src_languages = ["en", "en", "en", "en", "en", "de"]
-        tgt_languages = ["it", "zh", "jp", "es", "fr", "en"]
+        tgt_languages = ["it", "zh", "ja", "es", "fr", "en"]  #for previous tests Madlad had used jp instead of ja, I need to test it again with ja
     elif(modelType == ModelType.GEMMA3):
         src_languages = ["English", "English", "English", "English", "English", "German"]
         tgt_languages = ["Italian", "Chinese", "Japanese", "Spanish", "French", "English"]
