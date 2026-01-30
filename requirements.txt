@@ -7,7 +7,7 @@ onnx_tool==0.9.0
 onnxoptimizer==0.3.13
 onnxruntime==1.23.2
 onnxsim==0.4.36
-optimum[onnx]==2.0.0
+optimum-onnx==0.1.0
 packaging==25.0
 prettytable==3.17.0
 progress==1.6.1
@@ -16,6 +16,8 @@ strsimpy==0.2.1
 tokenizers
 torch==2.9.1
 torchinfo==1.8.0
-transformers[sentencepiece]==4.55.4
+transformers[sentencepiece]==4.57.6
 onnx-ir==0.1.15
 onnxruntime-genai==0.11.4
+accelerate==1.12.0
+onnxscript==0.6.0
