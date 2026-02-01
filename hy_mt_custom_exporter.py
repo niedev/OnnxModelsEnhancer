@@ -4,7 +4,7 @@ import time
 import torch
 import numpy as np
 import onnxruntime
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, HunYuanDenseV1ForCausalLM
 from torch.export import Dim
 
 os.environ["TORCH_LOGS"] = "+dynamic,+dynamo"
@@ -338,7 +338,24 @@ def export_model(onnx_model_folder = 'onnx/HY-MT/CustomExport/', onnx_model_file
     print('\nExport done!\n')
 
 
+def export_model2():
+    en_text_extended_128 = ("Pre-trained Transformer models have achieved state-of-the-art performance on natural language processing tasks and have been adopted as feature extractors for solving downstream tasks such as question answering, natural language inference, and sentiment analysis. The current state-of-the-art Transformer-based pre-trained models consist of dozens of layers and millions of parameters. While deeper and wider models yield better performance, they also need large GPU/TPU memory. For example, BERT-large (Devlin et al., 2019")
 
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    # con torch script = True la conversione funziona
+    model = HunYuanDenseV1ForCausalLM.from_pretrained(model_name, use_cache=True)
+    model.eval()
+    messages = [
+        {"role": "user", "content": "Translate the following segment into Chinese, without additional explanation.\n\nIt’s on the house."},
+    ]
+    inputs = tokenizer.apply_chat_template(
+        messages,
+        tokenize=True,
+        add_generation_prompt=False,
+        return_tensors="pt"
+    )
+
+    # conversione (da fare)
 
 
 

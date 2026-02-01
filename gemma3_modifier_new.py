@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 import optimum.exporters.onnx
-from transformers import Gemma3ForConditionalGeneration
+from transformers import Gemma3ForConditionalGeneration, Gemma3ForCausalLM
 import huggingface_hub
 from huggingface_hub import constants, snapshot_download
 from onnxruntime_genai.models.builder import create_model
@@ -26,13 +26,29 @@ en_text = "Also unlike 2014, there aren’t nearly as many loopholes. You can’
 
 
 def create_gemma3_final_model():
-    convert_gemma3_cache_optimum(False)
+    convert_gemma3_cache_optimum()
+    #convert_gemma3_cache_genai(False)
     #convert_gemma3_cache_optimum(True)
-    quantize_gemma3_4bit()
+    #quantize_gemma3_4bit()
 
 
 
-def convert_gemma3_cache_optimum(quantize = False):
+def convert_gemma3_cache_optimum():
+    # metodo per esportare Madlad in formato Onnx con optimum e kv cache
+    model_name = 'google/translategemma-4b-it'   #google/gemma-3-4b-it-qat-q4_0-unquantized
+    save_directory = 'onnx/TranslateGemma/Optimum'
+
+    os.makedirs(save_directory, exist_ok=True)
+    token = open("hf_token.txt").read()
+    huggingface_hub.login(token=token)
+
+    if((not Path(save_directory + "/decoder_with_past_model.onnx").is_file())):
+      model = Gemma3ForCausalLM.from_pretrained(model_name, use_cache=True, attn_implementation="eager")
+      model.eval()
+      optimum.exporters.onnx.onnx_export_from_model(model, Path(save_directory), opset=18, optimize="O4")
+
+
+def convert_gemma3_cache_genai(quantize = False):
     # metodo per esportare Gemma3 in formato Onnx con onnxruntime gen-ai e kv cache
     model_name = 'google/translategemma-4b-it'   #google/gemma-3-4b-it-qat-q4_0-unquantized
     save_directory = 'onnx/TranslateGemma/Huggingface'
@@ -131,7 +147,7 @@ def _quantize_dynamic_int8(model_fp32_path: str, model_int8_path: str, nodes_to_
 
 
 if __name__ == '__main__':
-   #create_gemma3_final_model()
+   create_gemma3_final_model()
    #onnx_execution.onnx_execution_gemma3_cache(text=en_text, src_lang="English", tgt_lang="Italian", decoder_path="onnx/Gemma3/Onnx/Quantized/gemma3_decoder_4bit.onnx")
    #onnx_execution.onnx_execution_translate_gemma_cache(text=en_text, src_lang="en", tgt_lang="it", decoder_path="onnx/TranslateGemma/Onnx/Quantized/RTN32/gemma3_decoder_4bit.onnx")
 
@@ -139,11 +155,11 @@ if __name__ == '__main__':
         decoder_path="onnx/TranslateGemma/Onnx/model.onnx",
         decoder_quant_path="onnx/TranslateGemma/Onnx/Quantized/RTN32/gemma3_decoder_4bit.onnx",
         modelType = onnx_execution.ModelType.TRANSLATEGEMMA, logFile = True, logFileFolder = "onnx/TranslateGemma/Onnx/Quantized/Quality/RTN32/", logFileName = "translate_gemma_quality_Int4"
-    )'''
+    )
    
    onnx_execution.compare_models_quality(
         decoder_path="onnx/TranslateGemma/Onnx/model.onnx",
         decoder_quant_path="onnx/TranslateGemma/Onnx/Quantized/RTN32/gemma3_decoder_4bit.onnx",
         modelType = onnx_execution.ModelType.TRANSLATEGEMMA, logFile = True, logFileFolder = "onnx/TranslateGemma/Onnx/Quantized/Quality/RTN32/", logFileName = "translate_gemma_quality_Int4",
         data_dir="en-ja", src_lan="en", tgt_lan="ja"
-    )
+    )'''

@@ -11,7 +11,8 @@ from onnxruntime.quantization import (
     quantize
 )
 from onnxruntime.quantization import quantize_dynamic, QuantFormat, QuantizationMode, QuantType, quant_pre_process
-from transformers import HunYuanDenseV1ForCausalLM
+from transformers import HunYuanDenseV1ForCausalLM, Gemma3ForCausalLM
+import hy_mt_optimum_exporter
 import onnx_execution
 import hy_mt_custom_exporter
 
@@ -26,25 +27,14 @@ en_text = "Also unlike 2014, there aren’t nearly as many loopholes. You can’
 def create_hy_final_model():
     #convert_hy_cache_optimum()
     #convert_hy_cache_genai()
-    convert_hy_cache_custom()
+    #convert_hy_cache_custom()
+    hy_mt_optimum_exporter.convert_hy_cache_optimum()
     #quantize_hy_4bit()
 
 
 def convert_hy_cache_custom():
     hy_mt_custom_exporter.export_model()
 
-
-def convert_hy_cache_optimum():
-    # metodo per esportare Madlad in formato Onnx con optimum e kv cache
-    model_name = 'tencent/HY-MT1.5-1.8B'
-    save_directory = "onnx/HY-MT/Optimum_Cache_Optimized"
-
-    os.makedirs(save_directory, exist_ok=True)
-
-    if((not Path(save_directory + "/encoder_model.onnx").is_file()) or (not Path(save_directory + "/decoder_with_past_model.onnx").is_file())):
-      model = HunYuanDenseV1ForCausalLM.from_pretrained(model_name, use_cache=True, attn_implementation="eager")
-      model.eval()
-      optimum.exporters.onnx.onnx_export_from_model(model, Path(save_directory), opset=21, optimize="O1")
 
 
 def convert_hy_cache_genai(quantize = False):
@@ -102,19 +92,19 @@ def convert_hy_cache_genai(quantize = False):
         create_model(model_name=model_name, input_path="", output_dir=save_onnx_directory, precision=("int4" if quantize else "fp32"), execution_provider="cpu", cache_dir=TRANSFORMERS_CACHE, extra_options=extra_options)
 
 
-def quantize_hy_4bit(outputFolder = "onnx/TranslateGemma/Onnx/Quantized/RTN32/"):
+def quantize_hy_4bit(outputFolder = "onnx/HY-MT/HuggingFace/Quantized/"):
     accuracy_level = 4
     quant_config = matmul_nbits_quantizer.DefaultWeightOnlyQuantConfig(
-        block_size=32, # 2's exponential and >= 16 (128)
+        block_size=128, # 2's exponential and >= 16 (128)
         is_symmetric=False, # if true, quantize to Int4. otherwise, quantize to uint4.
         accuracy_level=4, # used by MatMulNbits, see https://github.com/microsoft/onnxruntime/blob/main/docs/ContribOperators.md#attributes-35,
         quant_format = quant_utils.QuantFormat.QOperator,
         op_types_to_quantize={"MatMul", "Gather"})
     
     #quantization of decoder
-    model_fp32_path="onnx/TranslateGemma/Onnx/model.onnx"
-    model_int4_path=outputFolder + "translate_gemma_decoder_4bit.onnx"
-    model_int4_8_path=outputFolder + "hy_decoder_4-8bit.onnx"
+    model_fp32_path="onnx/HY-MT/HuggingFace/model.onnx"
+    model_int4_path=outputFolder + "model.onnx"
+    #model_int4_8_path=outputFolder + "hy_decoder_4-8bit.onnx"
 
     if(not Path(model_int4_path).is_file()):
         _quantize_weight_only(model_fp32_path, model_int4_path, quant_config, None, accuracy_level, True)
