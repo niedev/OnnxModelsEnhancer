@@ -25,92 +25,35 @@ en_text = "Also unlike 2014, there aren’t nearly as many loopholes. You can’
 
 
 def create_hy_final_model():
-    #convert_hy_cache_optimum()
-    #convert_hy_cache_genai()
-    #convert_hy_cache_custom()
+    #hy_mt_optimum_exporter.convert_hy_cache_optimum()
     hy_mt_optimum_exporter.convert_hy_cache_optimum()
-    #quantize_hy_4bit()
+    quantize_hy(modelPath="onnx/HY-MT/Optimum_Cache_Optimized/model_optimized.onnx", 
+                     outputFolder="onnx/HY-MT/Optimum_Cache_Optimized/Quantized/", bits=8)
+    quantize_hy(modelPath="onnx/HY-MT/HuggingFace/model.onnx", 
+                     outputFolder="onnx/HY-MT/HuggingFace/Quantized/", bits=8)
 
 
-def convert_hy_cache_custom():
-    hy_mt_custom_exporter.export_model()
-
-
-
-def convert_hy_cache_genai(quantize = False):
-    # metodo per esportare hy in formato Onnx con onnxruntime gen-ai e kv cache
-    model_name = 'tencent/HY-MT1.5-1.8B'   
-    save_directory = 'onnx/HY-MT/Huggingface'
-    if(quantize):
-        save_onnx_directory = "onnx/HY-MT/Onnx/Quantized"
-    else:
-        save_onnx_directory = "onnx/HY-MT/Onnx"
-
-    os.makedirs(save_directory, exist_ok=True)
-    os.makedirs(save_onnx_directory, exist_ok=True)
-
-    token = open("hf_token.txt").read()
-    huggingface_hub.login(token=token)
-
-    if len(os.listdir(save_directory)) == 0:  #if the directory is empty
-        #save the hugging face files locally
-        '''snapshot_download(
-            repo_id=model_name,
-            local_dir=save_directory,
-            local_dir_use_symlinks=False,
-        )'''
-        
-        """
-        Force hyForCausalLM so builder uses the hyForCausalLM branch
-        (text-only path) and we can keep token embedding inside the model
-        => input_ids instead of inputs_embeds.
-        """
-        '''cfg_path = Path(save_directory + "/config.json")
-        if not cfg_path.exists():
-            raise FileNotFoundError(f"config.json not found in {save_directory}")
-        cfg = json.loads(cfg_path.read_text())
-        
-        # 1) Force CausalLM export path
-        cfg["architectures"] = ["HunYuanDenseV1ForCausalLM"]
-
-        # 2) Promote text_config keys to root (builder expects root attributes)
-        text_cfg = cfg.get("text_config", {})
-        for k, v in text_cfg.items():
-            cfg.setdefault(k, v)
-
-        # 3) Ensure max_position_embeddings exists
-        # Some hy configs miss it; default for Gemma 3 is 131072.
-        cfg.setdefault("max_position_embeddings", text_cfg.get("max_position_embeddings", 131072))
-
-        cfg_path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False))'''
-    
-    if(not Path(save_onnx_directory+"/model.onnx").exists()):  #if the directory contains the model
-        extra_options = {
-            "exclude_embeds": False,
-        }
-
-        create_model(model_name=model_name, input_path="", output_dir=save_onnx_directory, precision=("int4" if quantize else "fp32"), execution_provider="cpu", cache_dir=TRANSFORMERS_CACHE, extra_options=extra_options)
-
-
-def quantize_hy_4bit(outputFolder = "onnx/HY-MT/HuggingFace/Quantized/"):
+def quantize_hy(modelPath = "onnx/HY-MT/HuggingFace/model.onnx", outputFolder = "onnx/HY-MT/HuggingFace/Quantized/", bits=4):
     accuracy_level = 4
     quant_config = matmul_nbits_quantizer.DefaultWeightOnlyQuantConfig(
         block_size=128, # 2's exponential and >= 16 (128)
         is_symmetric=False, # if true, quantize to Int4. otherwise, quantize to uint4.
         accuracy_level=4, # used by MatMulNbits, see https://github.com/microsoft/onnxruntime/blob/main/docs/ContribOperators.md#attributes-35,
         quant_format = quant_utils.QuantFormat.QOperator,
-        op_types_to_quantize={"MatMul", "Gather"})
+        op_types_to_quantize={"MatMul", "Gather"},
+        bits=bits)
+    
+    os.makedirs(outputFolder, exist_ok=True)
     
     #quantization of decoder
-    model_fp32_path="onnx/HY-MT/HuggingFace/model.onnx"
-    model_int4_path=outputFolder + "model.onnx"
-    #model_int4_8_path=outputFolder + "hy_decoder_4-8bit.onnx"
+    model_fp32_path=modelPath
+    model_quant_path=outputFolder + ("model.onnx" if bits == 4 else "model_int8.onnx")
+    model_quant_final_path=outputFolder + "model_int8_final.onnx"
 
-    if(not Path(model_int4_path).is_file()):
-        _quantize_weight_only(model_fp32_path, model_int4_path, quant_config, None, accuracy_level, True)
-    #if(not Path(model_int4_8_path).is_file()):
-        #_quantize_dynamic_int8(model_int4_path, model_int4_8_path, save_external=True)
-        #set_model_matmul_accuracy_level(model_int4_path, model_int4_path, accuracy_level)
+    if(not Path(model_quant_path).is_file()):
+        _quantize_weight_only(model_fp32_path, model_quant_path, quant_config, None, accuracy_level, True)
+        if(bits == 8):
+            _quantize_dynamic_int8(model_quant_path, model_quant_final_path, op_types_to_quantize=["Gather", "MatMul"], save_external=True)
 
 
 def _quantize_weight_only(model_fp32_path: str, model_int_path: str, quant_config, nodes_to_exclude=None, accuracy_level=None, save_external=False):
@@ -124,9 +67,9 @@ def _quantize_weight_only(model_fp32_path: str, model_int_path: str, quant_confi
     quant.model.save_model_to_file(model_int_path, save_external)
 
 
-def _quantize_dynamic_int8(model_fp32_path: str, model_int8_path: str, nodes_to_exclude=None, save_external=False):
+def _quantize_dynamic_int8(model_fp32_path: str, model_int8_path: str, op_types_to_quantize=None, nodes_to_exclude=None, save_external=False):
     quantize_dynamic(Path(model_fp32_path), Path(model_int8_path),
-                     per_channel=True, reduce_range=True, weight_type=QuantType.QUInt8, op_types_to_quantize=None,
+                     per_channel=True, reduce_range=True, weight_type=QuantType.QUInt8, op_types_to_quantize=op_types_to_quantize,
                      use_external_data_format = save_external, nodes_to_exclude=nodes_to_exclude,
                      extra_options={"EnableSubgraph": False,
                                     "ActivationSymmetric": False,
@@ -138,7 +81,12 @@ def _quantize_dynamic_int8(model_fp32_path: str, model_int8_path: str, nodes_to_
 if __name__ == '__main__':
    create_hy_final_model()
    #onnx_execution.onnx_execution_hy_cache(text=en_text, src_lang="English", tgt_lang="Italian", decoder_path="onnx/hy/Onnx/Quantized/hy_decoder_4bit.onnx")
-   #onnx_execution.onnx_execution_translate_gemma_cache(text=en_text, src_lang="en", tgt_lang="it", decoder_path="onnx/TranslateGemma/Onnx/Quantized/RTN32/hy_decoder_4bit.onnx")
+   print("Model Optimized:")
+   onnx_execution.onnx_execution_hy_cache(text=en_text, src_lang="English", tgt_lang="Italian", decoder_path="onnx/HY-MT/Optimum_Cache_Optimized/Quantized/model_int8_final.onnx")
+   #print("Model:")
+   #onnx_execution.onnx_execution_hy_cache(text=en_text, src_lang="English", tgt_lang="Italian", decoder_path="onnx/HY-MT/Optimum_Cache_Optimized/Quantized/model.onnx")
+   print("Model Group Query Attention:")
+   onnx_execution.onnx_execution_hy_cache(text=en_text, src_lang="English", tgt_lang="Italian", decoder_path="onnx/HY-MT/HuggingFace/Quantized/model_int8_final.onnx")
 
    '''onnx_execution.compare_models_quality_multi_language(
         decoder_path="onnx/TranslateGemma/Onnx/model.onnx",
