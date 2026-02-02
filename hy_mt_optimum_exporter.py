@@ -44,7 +44,7 @@ class GPTQConfigDict(GPTQConfig, MutableMapping):
 
 
 def convert_hy_cache_optimum(quantized = False):
-    # metodo per esportare Madlad in formato Onnx con optimum e kv cache, quantized conversion does not work for now
+    # metodo per esportare Madlad in formato Onnx con optimum e kv cache, quantized conversion does not work for now (also it require pip install gptqmodel --no-build-isolation)
     model_name = ('tencent/HY-MT1.5-1.8B-GPTQ-Int4' if quantized else 'tencent/HY-MT1.5-1.8B')
     save_directory = ("onnx/HY-MT/Optimum_Cache_Optimized/QuantizedGPTQ" if quantized else "onnx/HY-MT/Optimum_Cache_Optimized")
 
