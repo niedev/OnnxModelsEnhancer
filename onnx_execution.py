@@ -50,7 +50,7 @@ class TranslationCache:
         ]).encode("utf-8")
         return hashlib.sha256(payload).hexdigest()
     
-    def make_cache_key_gemma3(self, text, src_lang, tgt_lang, decoder_path):
+    def make_cache_key_gen(self, text, src_lang, tgt_lang, decoder_path):
         payload = "\n".join([
             "v1",  # bump when you change logic
             src_lang,
@@ -890,7 +890,7 @@ def onnx_execution_gemma3_cache(text, src_lang, tgt_lang,
         decoder_path = decoder_session._model_path
 
     if(cacheResults):
-        key = translation_cache.make_cache_key_gemma3(text, src_lang, tgt_lang, decoder_path)
+        key = translation_cache.make_cache_key_gen(text, src_lang, tgt_lang, decoder_path)
 
         cached = translation_cache.get(key)
         if cached is not None:
@@ -988,7 +988,7 @@ def onnx_execution_translate_gemma_cache(text, src_lang, tgt_lang,
         decoder_path = decoder_session._model_path
 
     if(cacheResults):
-        key = translation_cache.make_cache_key_gemma3(text, src_lang, tgt_lang, decoder_path)
+        key = translation_cache.make_cache_key_gen(text, src_lang, tgt_lang, decoder_path)
 
         cached = translation_cache.get(key)
         if cached is not None:
@@ -1060,6 +1060,108 @@ def onnx_execution_translate_gemma_cache(text, src_lang, tgt_lang,
         translation_cache.set(key, out_text)
     return out_text
 
+
+
+def onnx_execution_hy_cache(text, src_lang, tgt_lang,
+                                     decoder_path="onnx/HY-MT/Optimum_Cache_Optimized/model.onnx",
+                                     decoder_session=None, log=True, cacheResults=False):
+    #command = "Translate from "+ src_lang +" to "+ tgt_lang +", respond with only the best translation: "
+    #text = command + text
+    num_layers = 32
+    decoder_time = 0
+    model_name = 'tencent/HY-MT1.5-1.8B'
+    tokenizer: PreTrainedTokenizerBase = AutoTokenizer.from_pretrained(model_name)
+    providers = ['CPUExecutionProvider']  # 'ROCMExecutionProvider',
+
+    messages = [{
+            "role": "user",
+            "content": "Translate the following segment into "+tgt_lang+", without additional explanation.\n\n"+text
+        }]
+
+    if(decoder_session is not None):
+        decoder_path = decoder_session._model_path
+
+    if(cacheResults):
+        key = translation_cache.make_cache_key_gen(text, src_lang, tgt_lang, decoder_path)
+
+        cached = translation_cache.get(key)
+        if cached is not None:
+            return cached
+
+    # caricamento decoder session
+    sess_options = onnxruntime.SessionOptions()
+    sess_options.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_EXTENDED   
+    #sess_options.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_DISABLE_ALL
+    if(decoder_session is None):
+        decoder_session = onnxruntime.InferenceSession(Path(decoder_path), providers=providers, sess_options=sess_options)
+    
+    input_names = []
+    for input in decoder_session.get_inputs():
+        input_names.append(input.name)
+
+    # vars initialization
+    init_time = time.time()
+    is_using_position_ids = True if "position_ids" in input_names else False
+    eot_id = tokenizer.convert_tokens_to_ids("<｜hy_place▁holder▁no▁2｜>")
+    output_names = ["logits"]
+    for i in range(num_layers):
+        output_names.append("present."+str(i)+".key")
+        output_names.append("present."+str(i)+".value")
+
+    out = -1
+    result = []
+
+    # prepariamo gli input del decoder
+    input = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=True, return_dict=True, return_tensors="np")    #tokenizer(text, return_tensors='np')
+    input_ids: np.ndarray = input.input_ids
+    attention_mask: np.ndarray = input.attention_mask
+    #print(input_ids)
+    #print(attention_mask)
+    #print(tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False))
+    #print()
+    total_input_len = len(attention_mask[0])
+    input_feed = {"input_ids": input_ids, "attention_mask": attention_mask}
+    if(is_using_position_ids): input_feed["position_ids"] = np.arange(total_input_len).reshape(1, total_input_len)
+    for i in range(num_layers):
+        input_feed["past_key_values."+str(i)+".key"] = torch.zeros(1, 4, 0, 128, dtype=torch.float32).numpy()
+        input_feed["past_key_values."+str(i)+".value"] = torch.zeros(1, 4, 0, 128, dtype=torch.float32).numpy()
+
+    while(out != eot_id):
+        # esecuzione del decoder con cache
+        d_time = time.time()
+        decoderOutput = decoder_session.run(output_names, input_feed)
+        decoder_time = decoder_time + (time.time() - d_time)
+
+        total_input_len = total_input_len + 1
+        logits = decoderOutput[0][0][-1]  
+        out = logits.argmax()
+        if(out == eot_id): break
+        result.append(out)
+        if(log):
+            #print(tokenizer.decode(result))
+            print(tokenizer.decode(out), end="", flush=True)  # _convert_id_to_token(out)
+
+        #prepariamo gli input del decoder per la prossima iterazione
+        input_ids = torch.tensor([[out]], dtype=torch.int64).numpy()  #si usa il risultato come unico input_id della prossima iterazione
+        attention_mask = torch.ones(1, total_input_len, dtype=torch.int64).numpy()
+        input_feed = {"input_ids": input_ids, "attention_mask": attention_mask}
+        if(is_using_position_ids): input_feed["position_ids"] = np.array([[total_input_len-1]])
+        count = 1
+        for i in range(num_layers):
+            input_feed["past_key_values."+str(i)+".key"] = decoderOutput[count]
+            count = count+1
+            input_feed["past_key_values."+str(i)+".value"] = decoderOutput[count]
+            count = count+1
+
+    if(log): 
+        print()
+        print("Execution done in: " + str(time.time() - init_time) + " s")
+        print("Execution of decoder done in: " + str(decoder_time) + " s")
+
+    out_text = tokenizer.decode(result)
+    if(cacheResults):
+        translation_cache.set(key, out_text)
+    return out_text
 
 
 class ModelType(enum.Enum):
