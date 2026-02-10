@@ -9,9 +9,11 @@ import time
 import datasets
 import onnxruntime
 import torch
-from transformers import NllbTokenizer, T5Tokenizer, AutoTokenizer, AutoConfig, PreTrainedTokenizerBase, GemmaTokenizer
+from transformers import AutoModelForCausalLM, GenerationConfig, NllbTokenizer, T5Tokenizer, AutoTokenizer, AutoConfig, PreTrainedTokenizerBase, GemmaTokenizer, HunYuanDenseV1ForCausalLM, HunYuanDenseV1Model
 from strsimpy.normalized_levenshtein import NormalizedLevenshtein
 import numpy as np
+
+from hy_mt_optimum_exporter import GPTQConfigDict
 
 
 class TranslationCache:
@@ -1070,12 +1072,18 @@ def onnx_execution_hy_cache(text, src_lang, tgt_lang,
     num_layers = 32
     decoder_time = 0
     model_name = 'tencent/HY-MT1.5-1.8B'
-    tokenizer: PreTrainedTokenizerBase = AutoTokenizer.from_pretrained(model_name)
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
     providers = ['CPUExecutionProvider']  # 'ROCMExecutionProvider',
 
-    messages = [{
+    if(src_lang != "Chinese"):
+        messages = [{
             "role": "user",
             "content": "Translate the following segment into "+tgt_lang+", without additional explanation.\n\n"+text
+        }]
+    else:
+        messages = [{
+            "role": "user",
+            "content": "将以下文本翻译为"+tgt_lang+"，注意只需要输出翻译后的结果，不要额外解释：\n\n"+text    #the target language must be written in Chinese
         }]
 
     if(decoder_session is not None):
@@ -1117,8 +1125,8 @@ def onnx_execution_hy_cache(text, src_lang, tgt_lang,
     attention_mask: np.ndarray = input.attention_mask
     #print(input_ids)
     #print(attention_mask)
-    #print(tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False))
-    #print()
+    print(tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False))
+    print()
     total_input_len = len(attention_mask[0])
     input_feed = {"input_ids": input_ids, "attention_mask": attention_mask}
     if(is_using_position_ids): input_feed["position_ids"] = np.arange(total_input_len).reshape(1, total_input_len)
@@ -1164,11 +1172,89 @@ def onnx_execution_hy_cache(text, src_lang, tgt_lang,
     return out_text
 
 
+def execute_decoder_only_hf(text, src_lang, tgt_lang,
+                    model_name="tencent/HY-MT1.5-1.8B",
+                    decoder_session: AutoModelForCausalLM | None = None, quantized=False, log=True, cacheResults=False):
+    
+    tokenizer: PreTrainedTokenizerBase = AutoTokenizer.from_pretrained(model_name)
+
+    if(src_lang != "Chinese"):
+        messages = [{
+            "role": "user",
+            "content": "Translate the following segment into "+tgt_lang+", without additional explanation.\n\n"+text
+        }]
+    else:
+        messages = [{
+            "role": "user",
+            "content": "将以下文本翻译为"+tgt_lang+"，注意只需要输出翻译后的结果，不要额外解释：\n\n"+text    #the target language must be written in Chinese
+        }]
+
+    if(cacheResults):
+        key = translation_cache.make_cache_key_gen(text, src_lang, tgt_lang, "transformers-inference-"+model_name)
+
+        cached = translation_cache.get(key)
+        if cached is not None:
+            return cached
+
+    # caricamento decoder session
+    sess_options = onnxruntime.SessionOptions()
+    sess_options.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_EXTENDED   
+    #sess_options.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_DISABLE_ALL
+    if(decoder_session is None):
+        cfg=AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+
+        if(quantized):
+            quant_config = GPTQConfigDict.from_dict(cfg.quantization_config)
+            quant_config.act_group_aware = False
+
+            cfg.quantization_config = quant_config   # avoid conflict with desc_act=True
+            cfg.use_cache = True
+        decoder_session: HunYuanDenseV1ForCausalLM = HunYuanDenseV1ForCausalLM.from_pretrained(model_name, config=cfg, trust_remote_code=True, dtype="auto", attn_implementation="eager")  #attn_implementation="eager"
+        decoder_session.eval()
+
+    tokenized_chat = tokenizer.apply_chat_template(
+        messages,
+        tokenize=True,
+        add_generation_prompt=False,
+        return_tensors="pt"
+    )
+
+    init_time=time.time()
+    generation_config = GenerationConfig(
+        do_sample=False,
+        num_beams=1,
+        temperature=1.0,
+        top_k=0,
+        top_p=1.0,
+        repetition_penalty=1.0,
+        max_new_tokens=2048, 
+        eos_token_id=120020,
+        pad_token_id=120002,
+    )
+    outputs = decoder_session.generate(tokenized_chat.to(decoder_session.device), max_new_tokens=2048, generation_config=generation_config, use_model_defaults=False, trust_remote_code=True)        
+
+    out_text = tokenizer.decode(outputs[0])
+
+    out_text = out_text.split("<｜hy_place▁holder▁no▁8｜>", 1)[1] \
+                .split("<｜hy_place▁holder▁no▁2｜>", 1)[0] \
+                .strip()
+
+    if(log):
+        print(out_text)
+        print("Execution done in: " + str(time.time() - init_time) + " s")
+
+    if(cacheResults):
+        translation_cache.set(key, out_text)
+    return out_text
+
+
 class ModelType(enum.Enum):
     NLLB = 1
     MADLAD = 2
     GEMMA3 = 3
     TRANSLATEGEMMA = 4
+    HYMT = 5
+    HYMT_hf = 6
 
 def compare_models_quality(
         initializer_path="onnx/Madlad/Optimum_Cache_Optimized/cache_initializer.onnx",
@@ -1186,7 +1272,7 @@ def compare_models_quality(
 
     providers = ['CPUExecutionProvider']
 
-    if(modelType != ModelType.GEMMA3):
+    if(modelType == ModelType.NLLB or modelType == ModelType.MADLAD):
         initializer_session = onnxruntime.InferenceSession(Path(initializer_path), providers=providers)
         encoder_session = onnxruntime.InferenceSession(Path(encoder_path), providers=providers)
         decoder_session = onnxruntime.InferenceSession(Path(decoder_path), providers=providers)
@@ -1196,10 +1282,25 @@ def compare_models_quality(
         encoder_session_quantized = onnxruntime.InferenceSession(Path(encoder_quant_path), providers=providers)
         decoder_session_quantized = onnxruntime.InferenceSession(Path(decoder_quant_path), providers=providers)
         embed_session_quantized = onnxruntime.InferenceSession(Path(embed_quant_path), providers=providers)
-    else:
+    elif(modelType != ModelType.HYMT_hf):
         decoder_session = onnxruntime.InferenceSession(Path(decoder_path), providers=providers)
 
         decoder_session_quantized = onnxruntime.InferenceSession(Path(decoder_quant_path), providers=providers)
+    else:
+        decoder_session = AutoModelForCausalLM.from_pretrained(decoder_path, use_cache=True, trust_remote_code=True, attn_implementation="eager")
+        decoder_session.eval()
+
+        if("FP8" not in decoder_quant_path):
+            cfg=AutoConfig.from_pretrained(decoder_quant_path, trust_remote_code=True)
+            quant_config = GPTQConfigDict.from_dict(cfg.quantization_config)
+            quant_config.act_group_aware = False
+            cfg.quantization_config = quant_config   # avoid conflict with desc_act=True
+            cfg.use_cache = True
+            decoder_session_quantized: HunYuanDenseV1ForCausalLM = HunYuanDenseV1ForCausalLM.from_pretrained(decoder_quant_path, config=cfg, trust_remote_code=True, dtype="auto", attn_implementation="eager")  #attn_implementation="eager"
+            decoder_session_quantized.eval()
+        else:
+            decoder_session_quantized = AutoModelForCausalLM.from_pretrained(decoder_quant_path, use_cache=True, trust_remote_code=True, attn_implementation="eager")
+            decoder_session_quantized.eval()
 
     src = data_dir.split('-')[0]
 
@@ -1231,6 +1332,16 @@ def compare_models_quality(
                 result = onnx_execution_translate_gemma_cache(data[src], src_lan, tgt_lan, decoder_session=decoder_session, log=False, cacheResults=True)
                 #esecuzione con decoder quantizzato
                 result_quantized = onnx_execution_translate_gemma_cache(data[src], src_lan, tgt_lan, decoder_session=decoder_session_quantized, log=False, cacheResults=False)
+            elif(modelType == ModelType.HYMT):
+                #esecuzione con decoder normale
+                result = onnx_execution_hy_cache(data[src], src_lan, tgt_lan, decoder_session=decoder_session, log=False, cacheResults=True)
+                #esecuzione con decoder quantizzato
+                result_quantized = onnx_execution_hy_cache(data[src], src_lan, tgt_lan, decoder_session=decoder_session_quantized, log=False, cacheResults=False)
+            elif(modelType == ModelType.HYMT_hf):
+                #esecuzione con decoder normale
+                result = execute_decoder_only_hf(data[src], src_lan, tgt_lan, model_name=decoder_path, decoder_session=decoder_session, log=False, cacheResults=True)
+                #esecuzione con decoder quantizzato
+                result_quantized = execute_decoder_only_hf(data[src], src_lan, tgt_lan, model_name=decoder_quant_path, decoder_session=decoder_session_quantized, quantized=(False if "FP8" in decoder_quant_path else True), log=False, cacheResults=False)
 
             similarity_score = 1
             if(result != result_quantized):
@@ -1298,6 +1409,9 @@ def compare_models_quality_multi_language(
         src_languages = ["en", "en", "en", "en", "en", "de"]
         tgt_languages = ["it", "zh", "ja", "es", "fr", "en"]  #for previous tests Madlad had used jp instead of ja, I need to test it again with ja
     elif(modelType == ModelType.GEMMA3):
+        src_languages = ["English", "English", "English", "English", "English", "German"]
+        tgt_languages = ["Italian", "Chinese", "Japanese", "Spanish", "French", "English"]
+    elif(modelType == ModelType.HYMT or modelType == ModelType.HYMT_hf):
         src_languages = ["English", "English", "English", "English", "English", "German"]
         tgt_languages = ["Italian", "Chinese", "Japanese", "Spanish", "French", "English"]
 

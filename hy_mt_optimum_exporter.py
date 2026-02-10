@@ -59,7 +59,7 @@ def convert_hy_cache_optimum(quantized = False):
 
             cfg.quantization_config = quant_config   # avoid conflict with desc_act=True
 
-        model = HunYuanDenseV1ForCausalLM.from_pretrained(model_name, trust_remote_code=True, config=cfg, dtype="auto", low_cpu_mem_usage=True, )   #use_cache=True, attn_implementation="eager", device_map="cpu" for bf16
+        model = HunYuanDenseV1ForCausalLM.from_pretrained(model_name, trust_remote_code=True, config=cfg, device_map="cpu", dtype="auto", low_cpu_mem_usage=True, use_cache=True, attn_implementation="eager")   # device_map="cpu" for bf16
         model.eval()
 
         onnx_config = HYMTOnnxConfig(model.config, task="text-generation", use_past=True, use_past_in_inputs=True, float_dtype="bf16")  #float_dtype= "bf16" if quantization is true

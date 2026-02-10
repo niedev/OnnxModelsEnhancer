@@ -15,6 +15,7 @@ from transformers import HunYuanDenseV1ForCausalLM, Gemma3ForCausalLM
 import hy_mt_optimum_exporter
 import onnx_execution
 import hy_mt_custom_exporter
+from kernels import has_kernel
 
 
 PYTORCH_PRETRAINED_BERT_CACHE = os.getenv("PYTORCH_PRETRAINED_BERT_CACHE", constants.HF_HUB_CACHE)
@@ -26,11 +27,10 @@ en_text = "Also unlike 2014, there aren’t nearly as many loopholes. You can’
 
 def create_hy_final_model():
     #hy_mt_optimum_exporter.convert_hy_cache_optimum()
-    hy_mt_optimum_exporter.convert_hy_cache_optimum()
     quantize_hy(modelPath="onnx/HY-MT/Optimum_Cache_Optimized/model_optimized.onnx", 
-                     outputFolder="onnx/HY-MT/Optimum_Cache_Optimized/Quantized/", bits=8)
+                     outputFolder="onnx/HY-MT/Optimum_Cache_Optimized/Quantized/", bits=4)
     quantize_hy(modelPath="onnx/HY-MT/HuggingFace/model.onnx", 
-                     outputFolder="onnx/HY-MT/HuggingFace/Quantized/", bits=8)
+                     outputFolder="onnx/HY-MT/HuggingFace/Quantized/", bits=4)
 
 
 def quantize_hy(modelPath = "onnx/HY-MT/HuggingFace/model.onnx", outputFolder = "onnx/HY-MT/HuggingFace/Quantized/", bits=4):
@@ -79,18 +79,35 @@ def _quantize_dynamic_int8(model_fp32_path: str, model_int8_path: str, op_types_
 
 
 if __name__ == '__main__':
-   create_hy_final_model()
-   #onnx_execution.onnx_execution_hy_cache(text=en_text, src_lang="English", tgt_lang="Italian", decoder_path="onnx/hy/Onnx/Quantized/hy_decoder_4bit.onnx")
-   print("Model Optimized:")
-   onnx_execution.onnx_execution_hy_cache(text=en_text, src_lang="English", tgt_lang="Italian", decoder_path="onnx/HY-MT/Optimum_Cache_Optimized/Quantized/model_int8_final.onnx")
-   #print("Model:")
-   #onnx_execution.onnx_execution_hy_cache(text=en_text, src_lang="English", tgt_lang="Italian", decoder_path="onnx/HY-MT/Optimum_Cache_Optimized/Quantized/model.onnx")
-   print("Model Group Query Attention:")
-   onnx_execution.onnx_execution_hy_cache(text=en_text, src_lang="English", tgt_lang="Italian", decoder_path="onnx/HY-MT/HuggingFace/Quantized/model_int8_final.onnx")
+    #create_hy_final_model()
 
-   '''onnx_execution.compare_models_quality_multi_language(
-        decoder_path="onnx/TranslateGemma/Onnx/model.onnx",
-        decoder_quant_path="onnx/TranslateGemma/Onnx/Quantized/RTN32/hy_decoder_4bit.onnx",
-        modelType = onnx_execution.ModelType.TRANSLATEGEMMA, logFile = True, logFileFolder = "onnx/TranslateGemma/Onnx/Quantized/Quality/RTN32/", logFileName = "translate_gemma_quality_Int4"
+    onnx_execution.onnx_execution_hy_cache(text=en_text, src_lang="English", tgt_lang="Italian", decoder_path="onnx/HY-MT/Optimum_Cache_Optimized/Quantized/model_int8_final.onnx")
+    #print("Model Optimized:")
+    #onnx_execution.onnx_execution_hy_cache(text=en_text, src_lang="English", tgt_lang="Italian", decoder_path="onnx/HY-MT/Optimum_Cache_Optimized/Quantized/model_int8_final.onnx")
+    #print("Model:")
+    #onnx_execution.onnx_execution_hy_cache(text=en_text, src_lang="English", tgt_lang="Italian", decoder_path="onnx/HY-MT/Optimum_Cache_Optimized/Quantized/model.onnx")
+    #print("Model Group Query Attention:")
+
+    print("quantization-gptq available:", has_kernel("kernels-community/quantization-gptq"))
+
+    #onnx_execution.execute_decoder_only_hf(text=en_text, src_lang="English", tgt_lang="Italian", quantized=False, log=True, model_name="tencent/HY-MT1.5-1.8B")
+    #onnx_execution.execute_decoder_only_hf(text=en_text, src_lang="English", tgt_lang="Italian", quantized=True, log=True, model_name="tencent/HY-MT1.5-1.8B-GPTQ-Int4")
+
+    '''onnx_execution.compare_models_quality_multi_language(
+        decoder_path="onnx/HY-MT/Optimum_Cache_Optimized/model_optimized.onnx",
+        decoder_quant_path="onnx/HY-MT/Optimum_Cache_Optimized/Quantized/model_int8_final.onnx",
+        modelType = onnx_execution.ModelType.HYMT, logFile = True, logFileFolder = "onnx/HY-MT/Optimum_Cache_Optimized/Quantized/Quality/RTNInt8/", logFileName = "translate_hy_Int8"
+    )
+
+    onnx_execution.compare_models_quality_multi_language(
+        decoder_path="onnx/HY-MT/Optimum_Cache_Optimized/model_optimized.onnx",
+        decoder_quant_path="onnx/HY-MT/Optimum_Cache_Optimized/Quantized/model.onnx",
+        modelType = onnx_execution.ModelType.HYMT, logFile = True, logFileFolder = "onnx/HY-MT/Optimum_Cache_Optimized/Quantized/Quality/RTN/", logFileName = "translate_hy_Int4"
+    )
+
+    onnx_execution.compare_models_quality_multi_language(
+        decoder_path="tencent/HY-MT1.5-1.8B",
+        decoder_quant_path="tencent/HY-MT1.5-1.8B-FP8",
+        modelType = onnx_execution.ModelType.HYMT_hf, logFile = True, logFileFolder = "onnx/HY-MT/Optimum_Cache_Optimized/Quantized/Quality/HF_Fp8/", logFileName = "translate_hy_Fp8"
     )'''
 
