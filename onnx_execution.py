@@ -1125,8 +1125,8 @@ def onnx_execution_hy_cache(text, src_lang, tgt_lang,
     attention_mask: np.ndarray = input.attention_mask
     #print(input_ids)
     #print(attention_mask)
-    print(tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False))
-    print()
+    #print(tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False))
+    #print()
     total_input_len = len(attention_mask[0])
     input_feed = {"input_ids": input_ids, "attention_mask": attention_mask}
     if(is_using_position_ids): input_feed["position_ids"] = np.arange(total_input_len).reshape(1, total_input_len)

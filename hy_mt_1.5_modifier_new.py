@@ -16,6 +16,7 @@ import hy_mt_optimum_exporter
 import onnx_execution
 import hy_mt_custom_exporter
 from kernels import has_kernel
+from onnxruntime.transformers.optimizer import optimize_by_onnxruntime
 
 
 PYTORCH_PRETRAINED_BERT_CACHE = os.getenv("PYTORCH_PRETRAINED_BERT_CACHE", constants.HF_HUB_CACHE)
@@ -26,11 +27,13 @@ en_text = "Also unlike 2014, there aren’t nearly as many loopholes. You can’
 
 
 def create_hy_final_model():
-    #hy_mt_optimum_exporter.convert_hy_cache_optimum()
+    hy_mt_optimum_exporter.convert_hy_cache_optimum()
     quantize_hy(modelPath="onnx/HY-MT/Optimum_Cache_Optimized/model_optimized.onnx", 
-                     outputFolder="onnx/HY-MT/Optimum_Cache_Optimized/Quantized/", bits=4)
-    quantize_hy(modelPath="onnx/HY-MT/HuggingFace/model.onnx", 
-                     outputFolder="onnx/HY-MT/HuggingFace/Quantized/", bits=4)
+                     outputFolder="onnx/HY-MT/Optimum_Cache_Optimized/Quantized/", bits=8)
+    
+    #optimize_by_onnxruntime("onnx/HY-MT/Optimum_Cache_Optimized/Quantized/model_int8_final.onnx", False, "onnx/HY-MT/Optimum_Cache_Optimized/Quantized/model_int8_final_optimized.onnx", opt_level=99, save_as_external_data=True, external_data_file_threshold=2000)
+    #quantize_hy(modelPath="onnx/HY-MT/HuggingFace/model.onnx", 
+    #                outputFolder="onnx/HY-MT/HuggingFace/Quantized/", bits=4)
 
 
 def quantize_hy(modelPath = "onnx/HY-MT/HuggingFace/model.onnx", outputFolder = "onnx/HY-MT/HuggingFace/Quantized/", bits=4):
@@ -52,8 +55,11 @@ def quantize_hy(modelPath = "onnx/HY-MT/HuggingFace/model.onnx", outputFolder = 
 
     if(not Path(model_quant_path).is_file()):
         _quantize_weight_only(model_fp32_path, model_quant_path, quant_config, None, accuracy_level, True)
-        if(bits == 8):
-            _quantize_dynamic_int8(model_quant_path, model_quant_final_path, op_types_to_quantize=["Gather", "MatMul"], save_external=True)
+    if(bits == 8 and not Path(model_quant_final_path).is_file()):
+        #_quantize_dynamic_int8(model_quant_path, model_quant_final_path, op_types_to_quantize=["Gather", "MatMul"], save_external=True)
+        quant_config.bits = 4
+        quant_config.block_size=16
+        _quantize_weight_only(model_quant_path, model_quant_final_path, quant_config, None, accuracy_level, True)
 
 
 def _quantize_weight_only(model_fp32_path: str, model_int_path: str, quant_config, nodes_to_exclude=None, accuracy_level=None, save_external=False):
@@ -79,9 +85,9 @@ def _quantize_dynamic_int8(model_fp32_path: str, model_int8_path: str, op_types_
 
 
 if __name__ == '__main__':
-    #create_hy_final_model()
+    create_hy_final_model()
 
-    onnx_execution.onnx_execution_hy_cache(text=en_text, src_lang="English", tgt_lang="Italian", decoder_path="onnx/HY-MT/Optimum_Cache_Optimized/Quantized/model_int8_final.onnx")
+    #onnx_execution.onnx_execution_hy_cache(text=en_text, src_lang="English", tgt_lang="Italian", decoder_path="onnx/HY-MT/Optimum_Cache_Optimized/Quantized/model_int8_final.onnx")
     #print("Model Optimized:")
     #onnx_execution.onnx_execution_hy_cache(text=en_text, src_lang="English", tgt_lang="Italian", decoder_path="onnx/HY-MT/Optimum_Cache_Optimized/Quantized/model_int8_final.onnx")
     #print("Model:")
@@ -96,7 +102,7 @@ if __name__ == '__main__':
     '''onnx_execution.compare_models_quality_multi_language(
         decoder_path="onnx/HY-MT/Optimum_Cache_Optimized/model_optimized.onnx",
         decoder_quant_path="onnx/HY-MT/Optimum_Cache_Optimized/Quantized/model_int8_final.onnx",
-        modelType = onnx_execution.ModelType.HYMT, logFile = True, logFileFolder = "onnx/HY-MT/Optimum_Cache_Optimized/Quantized/Quality/RTNInt8/", logFileName = "translate_hy_Int8"
+        modelType = onnx_execution.ModelType.HYMT, logFile = True, logFileFolder = "onnx/HY-MT/Optimum_Cache_Optimized/Quantized/Quality/RTNInt8Gather4bit/", logFileName = "translate_hy_Int8"
     )
 
     onnx_execution.compare_models_quality_multi_language(
