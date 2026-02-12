@@ -20,7 +20,7 @@ from optimum.onnxruntime.configuration import AutoOptimizationConfig, Optimizati
 from optimum.onnxruntime.preprocessors import QuantizationPreprocessor
 from optimum.utils.save_utils import maybe_save_preprocessors
 
-import main
+import Other.main as main
 import onnx
 import onnx_execution
 from onnxsim import simplify, model_info

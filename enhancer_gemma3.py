@@ -26,15 +26,13 @@ en_text = "Also unlike 2014, there aren’t nearly as many loopholes. You can’
 
 
 def create_gemma3_final_model():
-    convert_gemma3_cache_optimum()
-    #convert_gemma3_cache_genai(False)
-    #convert_gemma3_cache_optimum(True)
-    #quantize_gemma3_4bit()
+    convert_gemma3_cache_genai()
+    quantize_gemma3_4bit()
 
 
 
 def convert_gemma3_cache_optimum():
-    # metodo per esportare Madlad in formato Onnx con optimum e kv cache
+    # Method to export Gemma3 to Onnx format with optimal and kv cache (not working)
     model_name = 'google/translategemma-4b-it'   #google/gemma-3-4b-it-qat-q4_0-unquantized
     save_directory = 'onnx/TranslateGemma/Optimum'
 
@@ -49,7 +47,7 @@ def convert_gemma3_cache_optimum():
 
 
 def convert_gemma3_cache_genai(quantize = False):
-    # metodo per esportare Gemma3 in formato Onnx con onnxruntime gen-ai e kv cache
+    # method to export Gemma3 to Onnx format with onnxruntime gen-ai and kv cache
     model_name = 'google/translategemma-4b-it'   #google/gemma-3-4b-it-qat-q4_0-unquantized
     save_directory = 'onnx/TranslateGemma/Huggingface'
     if(quantize):
@@ -104,6 +102,8 @@ def convert_gemma3_cache_genai(quantize = False):
 
 
 def quantize_gemma3_4bit(outputFolder = "onnx/TranslateGemma/Onnx/Quantized/RTN32/"):
+    os.makedirs(outputFolder, exist_ok=True)
+
     accuracy_level = 4
     quant_config = matmul_nbits_quantizer.DefaultWeightOnlyQuantConfig(
         block_size=32, # 2's exponential and >= 16 (128)
@@ -122,6 +122,7 @@ def quantize_gemma3_4bit(outputFolder = "onnx/TranslateGemma/Onnx/Quantized/RTN3
     #if(not Path(model_int4_8_path).is_file()):
         #_quantize_dynamic_int8(model_int4_path, model_int4_8_path, save_external=True)
         #set_model_matmul_accuracy_level(model_int4_path, model_int4_path, accuracy_level)
+    print("\n\nFinal model saved in "+model_int4_path)
 
 
 def _quantize_weight_only(model_fp32_path: str, model_int_path: str, quant_config, nodes_to_exclude=None, accuracy_level=None, save_external=False):

@@ -44,7 +44,7 @@ class GPTQConfigDict(GPTQConfig, MutableMapping):
 
 
 def convert_hy_cache_optimum(quantized = False):
-    # metodo per esportare Madlad in formato Onnx con optimum e kv cache, quantized conversion does not work for now (also it require pip install gptqmodel --no-build-isolation)
+    # method to export hy-mt to Onnx format with onnxruntime gen-ai and kv cache, quantized conversion does not work for now (also it require pip install gptqmodel --no-build-isolation)
     model_name = ('tencent/HY-MT1.5-1.8B-GPTQ-Int4' if quantized else 'tencent/HY-MT1.5-1.8B')
     save_directory = ("onnx/HY-MT/Optimum_Cache_Optimized/QuantizedGPTQ" if quantized else "onnx/HY-MT/Optimum_Cache_Optimized")
 
@@ -59,10 +59,10 @@ def convert_hy_cache_optimum(quantized = False):
 
             cfg.quantization_config = quant_config   # avoid conflict with desc_act=True
 
-        model = HunYuanDenseV1ForCausalLM.from_pretrained(model_name, trust_remote_code=True, config=cfg, device_map="cpu", dtype="auto", low_cpu_mem_usage=True, use_cache=True, attn_implementation="eager")   # device_map="cpu" for bf16
+        model = HunYuanDenseV1ForCausalLM.from_pretrained(model_name, trust_remote_code=True, config=cfg, dtype="float32", low_cpu_mem_usage=True, attn_implementation="eager")   #use_cache=True, device_map="cpu" for bf16
         model.eval()
 
-        onnx_config = HYMTOnnxConfig(model.config, task="text-generation", use_past=True, use_past_in_inputs=True, float_dtype="bf16")  #float_dtype= "bf16" if quantization is true
+        onnx_config = HYMTOnnxConfig(model.config, task="text-generation", use_past=True, use_past_in_inputs=True, float_dtype="fp32")  #float_dtype= "bf16" if quantization is true
 
         optimum.exporters.onnx.onnx_export_from_model(model, Path(save_directory), opset=21, optimize=None, custom_onnx_configs={"model": onnx_config}, slim=False)
 

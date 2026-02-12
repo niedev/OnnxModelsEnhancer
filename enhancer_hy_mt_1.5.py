@@ -14,7 +14,6 @@ from onnxruntime.quantization import quantize_dynamic, QuantFormat, Quantization
 from transformers import HunYuanDenseV1ForCausalLM, Gemma3ForCausalLM
 import hy_mt_optimum_exporter
 import onnx_execution
-import hy_mt_custom_exporter
 from kernels import has_kernel
 from onnxruntime.transformers.optimizer import optimize_by_onnxruntime
 
@@ -32,8 +31,6 @@ def create_hy_final_model():
                      outputFolder="onnx/HY-MT/Optimum_Cache_Optimized/Quantized/", bits=8)
     
     #optimize_by_onnxruntime("onnx/HY-MT/Optimum_Cache_Optimized/Quantized/model_int8_final.onnx", False, "onnx/HY-MT/Optimum_Cache_Optimized/Quantized/model_int8_final_optimized.onnx", opt_level=99, save_as_external_data=True, external_data_file_threshold=2000)
-    #quantize_hy(modelPath="onnx/HY-MT/HuggingFace/model.onnx", 
-    #                outputFolder="onnx/HY-MT/HuggingFace/Quantized/", bits=4)
 
 
 def quantize_hy(modelPath = "onnx/HY-MT/HuggingFace/model.onnx", outputFolder = "onnx/HY-MT/HuggingFace/Quantized/", bits=4):
@@ -56,10 +53,9 @@ def quantize_hy(modelPath = "onnx/HY-MT/HuggingFace/model.onnx", outputFolder = 
     if(not Path(model_quant_path).is_file()):
         _quantize_weight_only(model_fp32_path, model_quant_path, quant_config, None, accuracy_level, True)
     if(bits == 8 and not Path(model_quant_final_path).is_file()):
-        #_quantize_dynamic_int8(model_quant_path, model_quant_final_path, op_types_to_quantize=["Gather", "MatMul"], save_external=True)
-        quant_config.bits = 4
-        quant_config.block_size=16
-        _quantize_weight_only(model_quant_path, model_quant_final_path, quant_config, None, accuracy_level, True)
+        _quantize_dynamic_int8(model_quant_path, model_quant_final_path, op_types_to_quantize=["Gather", "MatMul"], save_external=True)
+
+    print("\n\nFinal model saved in "+model_quant_final_path)
 
 
 def _quantize_weight_only(model_fp32_path: str, model_int_path: str, quant_config, nodes_to_exclude=None, accuracy_level=None, save_external=False):
@@ -94,7 +90,7 @@ if __name__ == '__main__':
     #onnx_execution.onnx_execution_hy_cache(text=en_text, src_lang="English", tgt_lang="Italian", decoder_path="onnx/HY-MT/Optimum_Cache_Optimized/Quantized/model.onnx")
     #print("Model Group Query Attention:")
 
-    print("quantization-gptq available:", has_kernel("kernels-community/quantization-gptq"))
+    #print("quantization-gptq available:", has_kernel("kernels-community/quantization-gptq"))
 
     #onnx_execution.execute_decoder_only_hf(text=en_text, src_lang="English", tgt_lang="Italian", quantized=False, log=True, model_name="tencent/HY-MT1.5-1.8B")
     #onnx_execution.execute_decoder_only_hf(text=en_text, src_lang="English", tgt_lang="Italian", quantized=True, log=True, model_name="tencent/HY-MT1.5-1.8B-GPTQ-Int4")
