@@ -8,6 +8,7 @@ This is the first version of this tool, so it's pretty barebones. The models off
 - TranslateGemma
 
 New models will be added in the future.
+<br/><br/>
 
 ## How to use
 
@@ -113,5 +114,18 @@ So, to run it in Python, simply copy the code or replicate its logic for executi
 #### Performance and quality:
 
 The generated model supports kv-cache, and it is quantized in int8. However, since this model will not be used in RTranslator (because HY-MT 1.5 is similar but with much better translation quality), several optimizations have not yet been made.
+<br/><br/>
 
+## Donations
+
+This tool is completely open-source. I don't make any money from it.
+
+So, if you find it useful and want to say thank you and support the project, you can make a donation by clicking on one of the buttons below (any amount is well accepted).
+
+[![ko-fi](https://www.ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/niedev)
+
+<a href='https://www.paypal.com/donate/?business=3VBKS3WC6AFHN&no_recurring=0&currency_code=EUR'><img alt='Donate' src='https://raw.githubusercontent.com/niedev/RTranslator/v2.00/images/Paypal.png' style="width: 190px; height: 80px;" /></a>
+
+In case you will donate, or just live a star, thank you :heart:
+<br /><br />
 
