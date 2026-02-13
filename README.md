@@ -13,7 +13,7 @@ New models will be added in the future.
 
 ### Installation
 
-This guide is for an Ubuntu environment, if you use Windows you can try to replicate the logic with equivalent windows command, ore use WSL.
+This guide is for an Ubuntu environment. If you use Windows, you can try to replicate the logic with equivalent Windows commands, or use WSL.
 
 First of all, clone this repo:
 
@@ -23,7 +23,7 @@ git clone https://github.com/niedev/OnnxModelsEnhancer
 cd OnnxModelsEnhancer
 ```
 
-After that, create a python virtual environment and install the requirements.txt inside it:
+After that, create a Python virtual environment and install the requirements.txt inside it:
 
 ```
 sudo apt update
@@ -43,7 +43,7 @@ Let's see in detail how to use this tool and what it does for each of the suppor
 
 ### Madlad 400
 
-After the installation, to generate an optimized version of Madlad you just need to execute the file "file_enchancer.py".
+After the installation, to generate an optimized version of Madlad, you just need to execute the file "enchancer_madlad.py".
 
 ```
 python enhancer_madlad.py
@@ -68,6 +68,6 @@ My version, however, uses a custom architecture, that has a single decoder copy,
 
 With these techniques, the non quantized model drops its size from 20GB to 12GB.
 
-Finally, the generated models are quantized in int4, with various optimizations to achieve very good performance and quality. So the final model size is 1.7GB and can be deployed even in mobile enviroments.
+Finally, the generated models are quantized in int4, with various optimizations to achieve very good performance and quality. So the final model size is 1.7GB and can be deployed even in mobile environments.
 
 
