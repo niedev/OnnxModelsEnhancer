@@ -6,6 +6,7 @@ This is the first version of this tool so it's pretty barebones, the models offi
 - Madlad 400 MT 3B
 - HY-MT 1.5 1.8B
 - TranslateGemma
+
 New models will be added in the future.
 
 ## How to use it
