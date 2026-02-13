@@ -40,6 +40,7 @@ pip install -r requirements.txt
 ```
 
 Let's see in detail how to use this tool and what it does for each of the supported models.
+<br/><br/>
 
 ### Madlad 400
 
@@ -69,7 +70,7 @@ My version, however, uses a custom architecture, that has a single decoder copy,
 With these techniques, the non quantized model drops its size from 20GB to 12GB.
 
 Finally, the generated models are quantized in int4, with various optimizations to achieve very good performance and quality. So the final model size is 1.7GB and can be deployed even in mobile environments.
-
+<br/><br/>
 
 ### HY-MT 1.5
 
@@ -91,7 +92,7 @@ So, to run it in Python, simply copy the code or replicate its logic for executi
 
 The generated model supports kv-cache, and it is quantized in int8, with various optimizations to achieve very good performance and quality. So the final model size is 2GB and can be deployed even in mobile environments.
 This model has not been quantized in int4 because it loses too much quality.
-
+<br/><br/>
 
 ### Translate Gemma
 
