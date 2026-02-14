@@ -113,7 +113,7 @@ So, to run it in Python, simply copy the code or replicate its logic for executi
 
 #### Performance and quality:
 
-The generated model supports kv-cache, and it is quantized in int8. However, since this model will not be used in RTranslator (because HY-MT 1.5 is similar but with much better translation quality), several optimizations have not yet been made.
+The generated model supports kv-cache, and it is quantized in int4. However, since this model will not be used in RTranslator (because HY-MT 1.5 is similar but with much better translation quality), several optimizations have not yet been made.
 <br/><br/>
 
 ## Donations
