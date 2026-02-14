@@ -12,6 +12,15 @@ New models will be added in the future.
 
 ## How to use
 
+### System Requirements
+
+This tool operates with pretty heavy models, so it requires at least **64GB of RAM**.
+
+If you don't have enough RAM, maybe you can avoid spending the 800 dollars (Wow! I just checked) and use the models already exported by this tool in the [releases](https://github.com/niedev/OnnxModelsEnhancer/releases).<br/>
+Just note that, unfortunately, the TranslateGemma model is missing because it exceeds the maximum size allowed on GitHub releases of 2GB (it is 3.6GB compressed), however HY-MT is similar but lighter, better, and more optimized.
+<br/><br/>
+
+
 ### Installation
 
 This guide is for an Ubuntu environment. If you use Windows, you can try to replicate the logic with equivalent Windows commands, or use WSL.
