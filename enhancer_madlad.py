@@ -35,9 +35,9 @@ def create_madlad_final_model(execute_model: bool = False):
     #quantize_madlad_8bit()
     
     if(execute_model):
-        onnx_execution.onnx_execution_madlad_cache_reduced_ram(en_text, "it", encoder_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/HQQPerf/madlad_encoder_4bit.onnx",
-                                        decoder_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/HQQPerf/madlad_decoder_4bit.onnx",
-                                        initializer_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/HQQPerf/madlad_cache_initializer_4bit.onnx",
+        onnx_execution.onnx_execution_madlad_cache_reduced_ram(en_text, "it", encoder_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/madlad_encoder_4bit.onnx",
+                                        decoder_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/madlad_decoder_4bit.onnx",
+                                        initializer_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/madlad_cache_initializer_4bit.onnx",
                                         embed_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/Quantized/madlad_embed_8bit.onnx", profiling=False)
         
         """onnx_execution.onnx_execution_madlad_cache_reduced_ram(en_text, "it", encoder_path="onnx/Madlad/Optimum_Cache_Optimized/ReducedRam/QuantizedInt8/madlad_encoder_8bit.onnx",
@@ -632,7 +632,7 @@ def get_DenseReluDense_nodes(path):
 
 
 if __name__ == '__main__':
-    create_madlad_final_model()
+    create_madlad_final_model(True)
     
     '''onnx_execution.compare_models_quality_multi_language(
         initializer_path="onnx/Madlad/Optimum_Cache_Optimized/cache_initializer.onnx",

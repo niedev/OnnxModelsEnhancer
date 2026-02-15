@@ -138,7 +138,7 @@ def onnx_execution(text, src_lang, tgt_lang):
         i = i+1
 
 
-def onnx_execution_madlad(text, tgt_lang, decoder_path):
+def onnx_execution_madlad(text, tgt_lang, decoder_path = "onnx/Madlad/Optimum/decoder_model.onnx"):
     text = "<2"+tgt_lang+"> "+text
     model_name = 'jbochi/madlad400-3b-mt'
     tokenizer = T5Tokenizer.from_pretrained(model_name)
@@ -171,7 +171,6 @@ def onnx_execution_madlad(text, tgt_lang, decoder_path):
         #esecuzione del decoder
         decoderOutput = decoder_session.run(["logits"],
                                            {"input_ids": decoder_input_ids,
-                                                    "attention_mask": decoder_attention_mask,
                                                     "encoder_hidden_states": encoderOuput[0],
                                                     "encoder_attention_mask": encoder_attention_mask})
         test = decoderOutput[0][0][i, :]
@@ -385,7 +384,7 @@ def onnx_execution_madlad_cache_reduced_ram(text, tgt_lang, encoder_path="onnx/M
                                      decoder_session:onnxruntime.InferenceSession|None=None,
                                      initializer_session:onnxruntime.InferenceSession|None=None,
                                      embed_session:onnxruntime.InferenceSession|None=None,
-                                     log=True, profiling=False, cacheResults=True):
+                                     log=True, profiling=False, cacheResults=False):
     init_time = time.time()
     embed_time_count = 0
     encoder_time_count = 0
@@ -393,7 +392,7 @@ def onnx_execution_madlad_cache_reduced_ram(text, tgt_lang, encoder_path="onnx/M
     initializer_time_count = 0
     text = "<2"+tgt_lang+"> "+text
     model_name = 'jbochi/madlad400-3b-mt'
-    tokenizer = T5Tokenizer.from_pretrained(model_name)
+    tokenizer: T5Tokenizer = T5Tokenizer.from_pretrained(model_name)
 
     if(encoder_session is not None):
         encoder_path = encoder_session._model_path
@@ -430,7 +429,7 @@ def onnx_execution_madlad_cache_reduced_ram(text, tgt_lang, encoder_path="onnx/M
     if(initializer_session is None):
         initializer_session = onnxruntime.InferenceSession(Path(initializer_path), sess_options=sess_options, providers=providers)
     #prepariamo gli input dell'encoder
-    inputEncoder = tokenizer(text, max_length=128, padding='max_length', return_tensors='pt')
+    inputEncoder = tokenizer(text, max_length=512, return_tensors='pt')
     encoder_input_ids = inputEncoder.input_ids.numpy()
     encoder_attention_mask = inputEncoder.attention_mask.numpy()
     #esecuzione dell'encoder
@@ -526,7 +525,7 @@ def onnx_execution_madlad_cache_reduced_ram(text, tgt_lang, encoder_path="onnx/M
         #prepariamo gli input del decoder per la prossima iterazione
         decoder_input_ids = torch.tensor([[out]], dtype=torch.int64).numpy()  #si usa il risultato come unico input_id della prossima iterazione
         if(log):
-            print(tokenizer.decode(result))  # _convert_id_to_token(out)
+            print(tokenizer.decode(result)+"\n")  # _convert_id_to_token(out)
 
     if(log):
         print("Execution done in: " + str(time.time() - init_time) + " s")
