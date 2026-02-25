@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package mydata;
+
+message Pair {
+  uint32 srcSentence = 1;
+  uint32 tgtSentence  = 2;
+}
+
+message PairList {
+  repeated Pair items = 1;
+}
+
+message DataMap {
+  map<string, PairList> data = 1;
+}

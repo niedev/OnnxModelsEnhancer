@@ -6,6 +6,9 @@ __pycache__/
 # onnx models
 onnx/
 
+# tatoeba db
+TatoebaBuilder/tatoeba.db
+
 # C extensions
 *.so
 
