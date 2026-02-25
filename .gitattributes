@@ -1,0 +1,2 @@
+TatoebaBuilder/sentences.csv filter=lfs diff=lfs merge=lfs -text
+TatoebaBuilder/links.csv filter=lfs diff=lfs merge=lfs -text
