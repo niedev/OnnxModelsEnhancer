@@ -94,8 +94,8 @@ def fill_links(cursor: sqlite3.Cursor):
             if((srcLang+"-"+tgtLang) not in data):
                 data[srcLang+"-"+tgtLang] = links_data_pb2.DataMap()
             # then, we calculate the hash of the srcSentence and insert, in the dictionary associated, the hash as a new key and associate to it a new array containing the couple (srcLink, tgtLink) (if the hash key already exists we add this couple to the array)
-            tgtSentenceTextNormalized = _normalize_text(tgtSentenceText)
-            hash = hashlib.shake_256(tgtSentenceTextNormalized.encode("utf-8")).hexdigest(8)
+            srcSentenceTextNormalized = _normalize_text(srcSentenceText)
+            hash = hashlib.shake_256(srcSentenceTextNormalized.encode("utf-8")).hexdigest(8)
             data[srcLang+"-"+tgtLang].data[hash].items.add(srcSentence=srcSentenceId, tgtSentence=tgtSentenceId)
 
     print("Total skiped links: "+str(skippedCount))
@@ -156,3 +156,6 @@ if __name__ == '__main__':
     remove_lang_from_sentences_db(cursor)
     connection.commit()
     connection.close()
+    
+    #hash = hashlib.shake_256(_normalize_text("Ciao, come stai?").encode("utf-8")).hexdigest(8)
+    #print(hash)
