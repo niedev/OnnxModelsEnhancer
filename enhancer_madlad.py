@@ -86,7 +86,7 @@ def create_madlad_cache_initializer(model_path, model_path_out):
         inputs_list = []
         nodes_list = []
         for node in nodes:
-            if(("EncDecAttention/k/MatMul" in node.name) or ("EncDecAttention/v/MatMul" in node.name) and node.op_type == "MatMul"):
+            if(("EncDecAttention/k/MatMul" in node.name or "EncDecAttention/v/MatMul" in node.name) and node.op_type == "MatMul"):
                 nodes_list.append(node)
                 for input in node.input:
                     if(input in initializers_dict):
